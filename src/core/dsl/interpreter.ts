@@ -76,6 +76,8 @@
 
 import { containsProfanity as _containsProfanity, extractProfaneWords } from '../profanity';
 import { compileSafe, testSafe } from './safe-regex';
+import { normalizeModel } from '../helpers';
+import { claudePriceTier } from '../claude-pricing';
 import { ASTNode } from './types';
 
 export class InterpreterError extends Error {
@@ -262,7 +264,7 @@ function looseEquals(a: unknown, b: unknown): boolean {
   return false;
 }
 
-/* ── Model tier lookup (mirrors helpers.ts MODEL_MULTIPLIERS) ── */
+/* ── Model tier lookup: Copilot multipliers (kept as before), then Claude list-price tiers ── */
 
 const MODEL_TIERS: Record<string, number> = {
   'claude-opus-4.7': 7.5,
@@ -284,11 +286,14 @@ const MODEL_TIERS: Record<string, number> = {
 };
 
 function modelTierLookup(raw: string): number {
-  const id = raw.replace(/^(openai\/|anthropic\/|google\/)/, '').replace(/-\d{4}-\d{2}-\d{2}$/, '').toLowerCase();
+  const stripped = raw.replace(/^(openai\/|anthropic\/|google\/)/, '').replace(/-\d{4}-\d{2}-\d{2}$/, '').toLowerCase();
+  // Shared normalization turns Claude API ids (claude-opus-4-7) into table keys (claude-opus-4.7).
+  const id = normalizeModel(stripped);
   for (const [k, v] of Object.entries(MODEL_TIERS)) {
     if (id.includes(k)) return v;
   }
-  return 0;
+  // Claude models Copilot never priced (Claude 5.x): derive the tier from Anthropic list price.
+  return claudePriceTier(id) ?? 0;                                 // Still 0 for unknown models: no false "premium".
 }
 
 /* ── Work type classification (mirrors helpers.ts classifyWorkType) ── */

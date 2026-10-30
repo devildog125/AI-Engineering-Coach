@@ -109,6 +109,18 @@ export function hasClaudeRate(modelId: string): boolean {
   return normalizeModel(modelId) in CLAUDE_RATES;                  // Same key normalization as pricing.
 }
 
+// Sonnet 4.x input price: the Copilot "1x" model, used as the reference for price-derived tiers.
+const TIER_REFERENCE_INPUT_USD = 3;
+
+/** Relative cost tier for a Claude model, on the same scale as Copilot multipliers (Sonnet 4.x = 1).
+ *  @param modelId raw or normalized Claude model id
+ *  @returns input list price ÷ $3 (Opus 5.5 ≈ 1.33, Sonnet 5 ≈ 0.67, Fable 5.1 ≈ 3.33), or null when unknown
+ *  Exists so "premium model" rules work for Claude models Copilot's multiplier table has never listed. */
+export function claudePriceTier(modelId: string): number | null {
+  const rate = CLAUDE_RATES[normalizeModel(modelId)];              // Same key normalization as pricing.
+  return rate ? rate.input / TIER_REFERENCE_INPUT_USD : null;      // Unknown model: no tier.
+}
+
 /** Price one Claude API call from its transcript `usage` object.
  *  @param modelId raw `message.model` of the assistant line (e.g. `claude-opus-5-5`)
  *  @param usage the `message.usage` object of that call

@@ -8,7 +8,7 @@
 import { Analyzer } from '../core/analyzer';
 import { ParseResult } from '../core/parser';
 import { loadSessionFromDisk } from '../core/cache';
-import { FF_TOKEN_REPORTING_ENABLED } from '../core/constants';
+import { FF_TOKEN_REPORTING_ENABLED, FF_TOKEN_USAGE_ENABLED } from '../core/constants';
 import { loadGitHubAppMetrics } from '../core/github-app-analytics';
 import { loadGitHubAppIssueCredits } from '../core/github-app-issue-credits';
 import { loadSessionImages } from '../core/session-image-loader';
@@ -730,12 +730,12 @@ const rpcHandlers: TypedRpcHandlers = {
     validateBurndownConfig(params?.config),
     isRecord(params?.filter) ? validateDateFilter(params.filter) : undefined,
   ) : errorResult('Token reporting is temporarily disabled'),
-  getAiCredits: (a, _p, params) => FF_TOKEN_REPORTING_ENABLED ? a.getAiCredits(validateDateFilter(params)) : errorResult('Token reporting is temporarily disabled'),
+  getAiCredits: (a, _p, params) => FF_TOKEN_USAGE_ENABLED ? a.getAiCredits(validateDateFilter(params)) : errorResult('Token reporting is temporarily disabled'),
   getAiCreditBurndown: (a, _p, params) => FF_TOKEN_REPORTING_ENABLED ? a.getAiCreditBurndown(
     validateBurndownConfig(params?.config),
     isRecord(params?.filter) ? validateDateFilter(params.filter) : undefined,
   ) : errorResult('Token reporting is temporarily disabled'),
-  getTokenCoverage: (a, _p, params) => FF_TOKEN_REPORTING_ENABLED ? a.getTokenCoverage(validateDateFilter(params)) : errorResult('Token reporting is temporarily disabled'),
+  getTokenCoverage: (a, _p, params) => FF_TOKEN_USAGE_ENABLED ? a.getTokenCoverage(validateDateFilter(params)) : errorResult('Token reporting is temporarily disabled'),
   getDayTimeline: (a, _p, params) => a.getDayTimeline(
     isOptionalString(params?.date) ? params.date : undefined,
     isOptionalString(params?.mode) ? params.mode : undefined,

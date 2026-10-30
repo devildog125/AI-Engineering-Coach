@@ -129,3 +129,7 @@ export const TOKEN_DATA_AVAILABLE_FROM = '2026-04-01';
 // tests/e2e/burndown.spec.ts and the getAiCreditBurndown mock in
 // tests/e2e/harness.html (see the TODO(FF_TOKEN_REPORTING_ENABLED) notes there).
 export const FF_TOKEN_REPORTING_ENABLED = false;
+// Token Usage tab (tokens + list-price cost) and its RPCs, split from the Copilot burndown above.
+// On: Claude Code cost is exact per API call and checked against Claude Code's own cost-state;
+// Copilot figures in the same view are labelled as unverified estimates.
+export const FF_TOKEN_USAGE_ENABLED = true;
