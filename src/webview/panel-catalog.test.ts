@@ -4,11 +4,17 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { CATALOG_BASE, clearCatalogCache, getCatalogItems } from './panel-catalog';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+import { ANTHROPIC_RAW_BASE, CATALOG_BASE, classifyAnthropicLicense, clearCatalogCache, getAnthropicSkillFiles, getCatalogItems, installedClaudeSkillNames } from './panel-catalog';
 
 const SKILLS_URL = `${CATALOG_BASE}/data/skills.json`;
 const AGENTS_URL = `${CATALOG_BASE}/data/agents.json`;
 const INSTRUCTIONS_URL = `${CATALOG_BASE}/data/instructions.json`;
+// Anthropic's repo listing; most tests answer it with an empty tree so only awesome-copilot items appear.
+const ANTHROPIC_TREE_URL = 'https://api.github.com/repos/anthropics/skills/git/trees/main?recursive=1';
+const ANTHROPIC_TREE_INIT = { redirect: 'error', headers: { Accept: 'application/vnd.github+json' } };
 
 const skill = {
   id: 'testing',
@@ -41,10 +47,13 @@ beforeEach(() => {
   feeds.set(SKILLS_URL, { items: [skill], filters: {} });
   feeds.set(AGENTS_URL, { items: [agent] });
   feeds.set(INSTRUCTIONS_URL, { items: [instruction] });
+  feeds.set(ANTHROPIC_TREE_URL, { tree: [] });
   fetchMock.mockImplementation(input => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
     if (!feeds.has(url)) throw new Error(`Unexpected catalog request: ${url}`);
-    return Promise.resolve(new Response(JSON.stringify(feeds.get(url))));
+    const body = feeds.get(url);
+    // Plain-text files (SKILL.md, LICENSE.txt) are stored as strings; feeds as JSON.
+    return Promise.resolve(new Response(typeof body === 'string' ? body : JSON.stringify(body)));
   });
   vi.spyOn(globalThis, 'fetch').mockImplementation(fetchMock);
 });
@@ -63,24 +72,28 @@ describe('community catalog feeds', () => {
         title: 'Testing Skill', description: 'Run focused tests.', category: '',
         path: 'skills/testing/SKILL.md',
         url: 'https://github.com/github/awesome-copilot/blob/main/skills/testing/SKILL.md',
+        source: 'awesome-copilot',
       },
       {
         kind: 'agent', id: 'agent:agents/reviewer.agent.md',
         title: 'Code Reviewer', description: 'Review code.', category: 'Testing',
         path: 'agents/reviewer.agent.md',
         url: 'https://github.com/github/awesome-copilot/blob/main/agents/reviewer.agent.md',
+        source: 'awesome-copilot',
       },
       {
         kind: 'instruction', id: 'instruction:instructions/typescript.instructions.md',
         title: 'TypeScript', description: '', category: '',
         path: 'instructions/typescript.instructions.md',
         url: 'https://github.com/github/awesome-copilot/blob/main/instructions/typescript.instructions.md',
+        source: 'awesome-copilot',
       },
     ]);
     expect(fetchMock.mock.calls).toEqual([
       [SKILLS_URL, { redirect: 'error' }],
       [AGENTS_URL, { redirect: 'error' }],
       [INSTRUCTIONS_URL, { redirect: 'error' }],
+      [ANTHROPIC_TREE_URL, ANTHROPIC_TREE_INIT],
     ]);
   });
 
@@ -88,17 +101,17 @@ describe('community catalog feeds', () => {
     const [first, second] = await Promise.all([getCatalogItems(), getCatalogItems()]);
     expect(second).toBe(first);
     expect(await getCatalogItems()).toBe(first);
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
     clearCatalogCache();
     expect(await getCatalogItems()).toEqual(first);
-    expect(fetchMock).toHaveBeenCalledTimes(6);
+    expect(fetchMock).toHaveBeenCalledTimes(8);
   });
 
   it('reports an HTTP failure and allows a later attempt to succeed', async () => {
     fetchMock.mockResolvedValueOnce(new Response('Unavailable', { status: 503 }));
     await expect(getCatalogItems()).rejects.toThrow('Failed to fetch skills catalog: HTTP 503');
     await expect(getCatalogItems()).resolves.toHaveLength(3);
-    expect(fetchMock).toHaveBeenCalledTimes(6);
+    expect(fetchMock).toHaveBeenCalledTimes(8);
   });
 
   it('retries a failed network request instead of retaining its rejected promise', async () => {
@@ -183,7 +196,7 @@ describe('community catalog feeds', () => {
     finish(new Response(JSON.stringify({ items: [{ ...skill, title: 'Old skill' }] })));
     expect((await previous)[0].title).toBe('Old skill');
     expect(await getCatalogItems()).toBe(current);
-    expect(fetchMock).toHaveBeenCalledTimes(6);
+    expect(fetchMock).toHaveBeenCalledTimes(8);
   });
 
   it('does not let an older failure clear a newer pending request', async () => {
@@ -201,6 +214,68 @@ describe('community catalog feeds', () => {
     finish(new Response(JSON.stringify({ items: [skill] })));
     const [first, second] = await Promise.all([current, concurrent]);
     expect(first).toBe(second);
-    expect(fetchMock).toHaveBeenCalledTimes(6);
+    expect(fetchMock).toHaveBeenCalledTimes(8);
+  });
+});
+
+describe("Anthropic's skills repo", () => {
+  /** Serve a one-skill repo: tree listing plus that skill's SKILL.md and LICENSE.txt. */
+  function serveAnthropicSkill(license: string, licenseText: string): void {
+    feeds.set(ANTHROPIC_TREE_URL, { tree: [
+      { type: 'blob', path: 'skills/pdf/SKILL.md' },
+      { type: 'blob', path: 'skills/pdf/LICENSE.txt' },
+      { type: 'blob', path: 'skills/pdf/scripts/fill.py' },
+      { type: 'blob', path: 'skills/../evil/SKILL.md' },        // Unsafe path: must be ignored.
+      { type: 'blob', path: 'README.md' },                      // Outside skills/: ignored.
+    ] });
+    feeds.set(`${ANTHROPIC_RAW_BASE}skills/pdf/SKILL.md`, `---\nname: pdf\ndescription: Work with PDFs.\nlicense: ${license}\n---\nBody`);
+    feeds.set(`${ANTHROPIC_RAW_BASE}skills/pdf/LICENSE.txt`, licenseText);
+  }
+
+  it('lists each skill with its license and remembers its files for install', async () => {
+    serveAnthropicSkill('Complete terms in LICENSE.txt', '   Apache License\n   Version 2.0');
+    const items = await getCatalogItems();
+    expect(items.find(item => item.source === 'anthropic')).toEqual({
+      kind: 'skill', id: 'anthropic:skills/pdf', title: 'pdf', description: 'Work with PDFs.',
+      category: 'Anthropic', path: 'skills/pdf/SKILL.md', url: 'https://github.com/anthropics/skills/tree/main/skills/pdf',
+      source: 'anthropic', license: 'Apache-2.0', proprietary: false,
+    });
+    expect(getAnthropicSkillFiles('pdf')).toEqual(['skills/pdf/SKILL.md', 'skills/pdf/LICENSE.txt', 'skills/pdf/scripts/fill.py']);
+  });
+
+  it('flags proprietary skills', async () => {
+    serveAnthropicSkill('Proprietary. LICENSE.txt has complete terms', 'LICENSE: Use of these materials ...');
+    const item = (await getCatalogItems()).find(entry => entry.source === 'anthropic');
+    expect(item).toMatchObject({ license: 'Proprietary', proprietary: true });
+  });
+
+  it('keeps the awesome-copilot catalog when GitHub is unreachable', async () => {
+    feeds.delete(ANTHROPIC_TREE_URL);                           // Mock throws for unknown URLs.
+    expect(await getCatalogItems()).toHaveLength(3);
+  });
+
+  it('treats unrecognized license text as not open source', () => {
+    expect(classifyAnthropicLicense('', 'Custom terms')).toEqual({ license: 'See LICENSE.txt', proprietary: true });
+  });
+});
+
+describe('installedClaudeSkillNames', () => {
+  it('finds personal and plugin skills but ignores the plugin trash', () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-home-'));
+    const addSkill = (...parts: string[]): void => {
+      fs.mkdirSync(path.join(home, '.claude', ...parts), { recursive: true });
+      fs.writeFileSync(path.join(home, '.claude', ...parts, 'SKILL.md'), '---\nname: x\n---');
+    };
+    addSkill('skills', 'Review');                                       // Personal skill.
+    addSkill('plugins', 'marketplaces', 'acme', 'skills', 'deploy');    // Plugin skill.
+    addSkill('plugins', '.trash', 'old', 'skills', 'gone');             // Uninstalled plugin.
+    const previousHome = process.env.HOME;
+    process.env.HOME = home;
+    try {
+      expect([...installedClaudeSkillNames()].sort()).toEqual(['deploy', 'review']);
+    } finally {
+      process.env.HOME = previousHome;
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 });

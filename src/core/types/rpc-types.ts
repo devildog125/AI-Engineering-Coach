@@ -130,7 +130,7 @@ export interface ExtensionMethodMap extends RpcMethodMap {
   generateDidYouKnow: { params: Record<string, unknown>; result: { facts: unknown[] } };
   exportSummary: { params: { filter?: DateFilter } | DateFilter | undefined; result: { ok: boolean; cancelled?: boolean; folder?: string; markdownPath?: string; jsonPath?: string } };
   installSkill: { params: { filename: string; content: string }; result: { ok: boolean; path?: string; error?: string } };
-  installCatalogItem: { params: { path: string; kind?: string; title?: string }; result: { content: string; filename: string; error?: string } };
+  installCatalogItem: { params: { path: string; kind?: string; title?: string; source?: string }; result: { content: string; filename: string; error?: string } };
   triageSkills: { params: Record<string, unknown>; result: { triaged: unknown[] } };
   discoverCatalog: { params: Record<string, unknown> | undefined; result: { items: unknown[]; totalScanned: number } };
   triageCatalog: { params: Record<string, unknown>; result: { items: unknown[] } };

@@ -37,7 +37,7 @@ export async function renderSkills(container: HTMLElement, currentFilter: DateFi
   render(html`
     <div class="sk-header">
       <h1>Skill Finder</h1>
-      <p class="sk-subtitle">Analyze your repeated prompts to discover custom skill opportunities and matching community skills.</p>
+      <p class="sk-subtitle">Analyze your repeated prompts to discover custom skill opportunities and matching skills for Claude Code and Copilot. Skills install to ~/.claude/skills/, which both read.</p>
     </div>
 
     <div class="sk-toolbar">
@@ -80,6 +80,8 @@ export async function renderSkills(container: HTMLElement, currentFilter: DateFi
       <p class="sk-section-desc">
         Matching picks from${' '}
         <a href="${CATALOG_BASE}/" target="_blank">awesome-copilot</a>
+        ${' '}and${' '}
+        <a href="https://github.com/anthropics/skills" target="_blank">Anthropic's official skills</a>
         ${' '}based on your repeated activities.
       </p>
       <div id="catalogResults">
@@ -321,7 +323,7 @@ function renderTriageResults(container: HTMLElement, triaged: TriagedCluster[], 
                   await rpc<{ ok: boolean }>('installSkill', { filename: res.filename, content: res.content } as Record<string, unknown>);
                   el.textContent = 'Installed';
                   el.classList.add('sk-btn-done');
-                  render(html`<span class="sk-installed-msg">Skill installed to ~/.agents/skills/</span>`, previewEl);
+                  render(html`<span class="sk-installed-msg">Skill installed to ~/.claude/skills/ (used by Claude Code and VS Code Copilot)</span>`, previewEl);
                 } catch (err: unknown) {
                   const msg = err instanceof Error ? err.message : 'Install failed';
                   render(html`<span class="sk-error">${msg}</span>`, previewEl);
@@ -425,14 +427,21 @@ function renderCatalogList(container: HTMLElement, items: CatalogItem[], totalSc
         const path = el.dataset.path || '';
         const kind = el.dataset.kind || 'skill';
         const title = el.dataset.title || '';
+        const source = el.dataset.source || 'awesome-copilot';
         if (!path) return;
+        // Proprietary license: the first click only asks; the second click installs.
+        if (el.dataset.proprietary === 'true' && el.dataset.confirmed !== 'true') {
+          el.dataset.confirmed = 'true';
+          el.textContent = 'Proprietary license: click again to install';
+          return;
+        }
 
         el.disabled = true;
         el.textContent = 'Fetching...';
 
         try {
           const res = await rpc<{ content: string; filename: string }>('installCatalogItem', {
-            path, kind, title,
+            path, kind, title, source,
           } as Record<string, unknown>);
 
           el.textContent = 'Installed';
@@ -457,7 +466,9 @@ function renderCatalogCard(item: CatalogItem): ReturnType<typeof html> {
   const color = kindColors[item.kind] || COLORS.blue;
   const icon = kindIcons[item.kind] || '?';
   const kindLabel = item.kind.charAt(0).toUpperCase() + item.kind.slice(1);
-  const ghUrl = `https://github.com/github/awesome-copilot/blob/main/${encodeURI(item.path)}`;
+  // Older cached results have no url/source: they are awesome-copilot items.
+  const ghUrl = item.url || `https://github.com/github/awesome-copilot/blob/main/${encodeURI(item.path)}`;
+  const sourceLabel = item.source === 'anthropic' ? 'Anthropic' : 'awesome-copilot';
 
   return html`
     <div class="sk-card sk-card-catalog">
@@ -469,7 +480,9 @@ function renderCatalogCard(item: CatalogItem): ReturnType<typeof html> {
           </div>
           <div class="sk-card-badges">
             <span class="sk-badge" style="color:${color}">${kindLabel}</span>
-            ${item.category ? html`<span class="sk-badge">${item.category}</span>` : null}
+            <span class="sk-badge">${sourceLabel}</span>
+            ${item.category && item.category !== sourceLabel ? html`<span class="sk-badge">${item.category}</span>` : null}
+            ${item.license ? html`<span class="sk-badge" style="color:${item.proprietary ? COLORS.yellow : COLORS.green}" title=${item.proprietary ? 'Not open source: read LICENSE.txt in the skill folder before installing.' : 'Open-source license'}>${item.license}</span>` : null}
           </div>
         </div>
       </div>
@@ -480,7 +493,9 @@ function renderCatalogCard(item: CatalogItem): ReturnType<typeof html> {
             ${item.matchReasons.map(r => html`<span class="sk-reason">${r}</span>`)}
           </div>` : null}
         <div class="sk-card-actions">
-          <button class="sk-btn sk-btn-install-catalog" data-path="${item.path}" data-kind="${item.kind}" data-title="${item.title}">Install</button>
+          ${item.installed
+            ? html`<button class="sk-btn sk-btn-done" disabled title="A Claude Code skill with this name is already installed (personal or plugin).">Installed</button>`
+            : html`<button class="sk-btn sk-btn-install-catalog" data-path="${item.path}" data-kind="${item.kind}" data-title="${item.title}" data-source="${item.source ?? 'awesome-copilot'}" data-proprietary="${item.proprietary ? 'true' : 'false'}">Install</button>`}
           <span class="sk-install-msg"></span>
         </div>
       </div>
