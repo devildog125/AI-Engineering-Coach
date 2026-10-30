@@ -368,7 +368,7 @@ export class ConsumptionAnalyzer extends AnalyzerBase {
     let recommendation: string;
     if (consumed > budget) {
       status = 'over-budget';
-      recommendation = `Over budget by ${Math.round(consumed - budget)} requests. Consider switching to lighter models (gpt-4.1-mini, gemini-flash).`;
+      recommendation = `Over budget by ${Math.round(consumed - budget)} requests. Consider switching to lighter models for simple tasks.`;
     } else if (projected > budget * 0.9) {
       status = 'warning';
       const remaining = budget - consumed;
@@ -934,7 +934,7 @@ export class ConsumptionAnalyzer extends AnalyzerBase {
     if (params.projected > params.budget * 0.9) {
       return {
         status: 'warning',
-        recommendation: `On pace to exceed budget. ${Math.round(params.remaining).toLocaleString()} tokens remaining, ~${Math.round(params.safeDailyBudget).toLocaleString()}/day safe. Consider switching to GPT-5 mini or Gemini Flash.${partialNote}`,
+        recommendation: `On pace to exceed budget. ${Math.round(params.remaining).toLocaleString()} tokens remaining, ~${Math.round(params.safeDailyBudget).toLocaleString()}/day safe. Consider switching to a lighter model for simple tasks.${partialNote}`,
       };
     }
     return {

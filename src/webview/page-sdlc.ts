@@ -203,7 +203,7 @@ export async function renderSdlc(container: HTMLElement, filter: DateFilter): Pr
           <div class="sdlc-section">
             <h3 class="sdlc-section-title">${SVG.robot} GitHub Configuration</h3>
             ${repos.length === 0
-              ? html`<div class="sdlc-empty">No workspace repos resolved. Open projects in VS Code to scan.</div>`
+              ? html`<div class="sdlc-empty">No project folders resolved from your sessions. Run a session from a project folder, or open one in VS Code, to scan.</div>`
               : html`<div class="sdlc-ghaw-list">
                   ${repos.map(r => {
                     const hasAny = r.agenticWorkflows.length > 0 || r.workflows.length > 0 || r.contextFiles.length > 0;

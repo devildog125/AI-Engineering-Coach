@@ -63,5 +63,5 @@ export function llmAvailable(): boolean {
 export function llmUnavailableNote(): string {
   return caps.host === 'canvas'
     ? 'Open in VS Code with the local Copilot agent to use this.'
-    : 'Sign in to GitHub Copilot in VS Code to use this.';
+    : 'Sign in to a VS Code language model provider (such as GitHub Copilot) to use this.';
 }

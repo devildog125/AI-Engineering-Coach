@@ -265,7 +265,7 @@ export async function renderOutput(container: HTMLElement, currentFilter: DateFi
     const chartTitle = level === 'weekly' ? 'Weekly AI Code Output' : level === 'monthly' ? 'Monthly AI Code Output' : 'Daily AI Code Output';
     const yLabel = level === 'weekly' ? 'LoC/week' : level === 'monthly' ? 'LoC/month' : 'LoC/day';
     const cadence = level === 'weekly' ? 'week' : level === 'monthly' ? 'month' : 'day';
-    const outputInfo = html`<span class="info-icon" tabindex="0" role="button" aria-label="AI code output info">${'\u24d8'}<span class="info-popup">Counts the net new lines of code the AI assistant actually wrote, aggregated per ${cadence}. Each edit is compared against the previous version of the file, so only added lines are counted ${'\u2014'} re-saving an unchanged file or rewriting the same lines is not double-counted. Taller bars mean more AI-authored code in that period; hover a bar to see the exact line count, and use the tabs below to split output by model, workspace, or harness.</span></span>`;
+    const outputInfo = html`<span class="info-icon" tabindex="0" role="button" aria-label="AI code output info">${'\u24d8'}<span class="info-popup">Counts the net new lines of code the AI assistant actually wrote, aggregated per ${cadence}. Edits that record the previous file version (Copilot edits, Claude Code Edit) count only the added lines, so rewriting the same lines is not double-counted; a whole-file write (Claude Code Write) counts every line it wrote. Taller bars mean more AI-authored code in that period; hover a bar to see the exact line count, and use the tabs below to split output by model, workspace, or harness.</span></span>`;
     const netInfo = html`<span class="info-icon" tabindex="0" role="button" aria-label="Net AI code output info">${'\u24d8'}<span class="info-popup">Net AI LoC is lines the AI added minus lines the AI removed, aggregated per ${cadence}. A ${cadence} where the assistant deleted or rewrote more than it added shows a bar below zero. This reflects the lasting footprint of AI edits on your files, not just gross output.</span></span>`;
     const netTitle = level === 'weekly' ? 'Weekly Net AI Code Output' : level === 'monthly' ? 'Monthly Net AI Code Output' : 'Daily Net AI Code Output';
 
@@ -761,7 +761,7 @@ export async function renderOutput(container: HTMLElement, currentFilter: DateFi
         <${StatCard} label="Cost (list price)" value=${formatMoney(data.totalCredits / 100)} accent="var(--accent-orange)" />
       </div>
       ${COST_BASIS_NOTE}${data.unpricedRequests > 0 && html`<p class="credits-note">${formatNum(data.unpricedRequests)} request(s) used a model with no known list price; their cost is left out, not guessed.</p>`}
-      <p class="credits-note">Totals reflect ${formatNum(data.countedRequests)} of ${formatNum(data.finalizableRequests)} finalizable requests with token data. Code completions are free and not counted. ${missingLabel}${partialLabel}${pendingLabel}${noDataLabel}</p>
+      <p class="credits-note">Totals reflect ${formatNum(data.countedRequests)} of ${formatNum(data.finalizableRequests)} finalizable requests with token data. Inline code completions are not counted. ${missingLabel}${partialLabel}${pendingLabel}${noDataLabel}</p>
       <div class="chart-tabs" style="margin-top:18px">
         <button class="chart-tab active" data-chart-tab="tokens">Token Consumption</button>
         <button class="chart-tab" data-chart-tab="tokens-ws">Tokens by Workspace</button>
