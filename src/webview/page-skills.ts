@@ -464,22 +464,31 @@ async function onCatalogInstallClick(el: HTMLButtonElement): Promise<void> {
     el.textContent = 'Proprietary license: click again to install';
     return;
   }
-  if (target.source === 'awesome-copilot' && target.kind === 'skill') {
-    showInstallChoice(el, target);                                 // Ask: Claude Code (converted) or ~/.agents/skills.
+  if (target.source === 'awesome-copilot' && target.kind in CHOICE_DIRS) {
+    showInstallChoice(el, target);                                 // Ask: Claude Code (converted) or ~/.agents (as-is).
     return;
   }
-  await installCatalogItemDirect(el, target);                      // Anthropic skills, Copilot agents/instructions.
+  await installCatalogItemDirect(el, target);                      // Anthropic skills: already Claude Code format.
 }
 
-/** Replace the Install button with the two destinations for an awesome-copilot skill. */
+/** Install destinations per awesome-copilot kind: converted for Claude Code, or copied as-is.
+ *  Claude Code equivalents: skill → skill, custom agent → subagent, instructions → path-scoped rule. */
+const CHOICE_DIRS: Record<string, { claude: string; claudeWhat: string; asIs: string }> = {
+  skill: { claude: '~/.claude/skills/', claudeWhat: 'skill', asIs: '~/.agents/skills/' },
+  agent: { claude: '~/.claude/agents/', claudeWhat: 'subagent', asIs: '~/.agents/agents/' },
+  instruction: { claude: '~/.claude/rules/', claudeWhat: 'rule (applyTo becomes paths)', asIs: '~/.agents/instructions/' },
+};
+
+/** Replace the Install button with the two destinations for an awesome-copilot item. */
 function showInstallChoice(el: HTMLButtonElement, target: CatalogInstallTarget): void {
   const choiceEl = el.closest('.sk-card')?.querySelector<HTMLElement>('.sk-install-choice');
-  if (!choiceEl) return;
+  const dirs = CHOICE_DIRS[target.kind];
+  if (!choiceEl || !dirs) return;
   el.hidden = true;                                                // The choice buttons take its place.
   render(html`
     <span class="sk-install-question">Install for:</span>
-    <button class="sk-btn sk-btn-primary sk-choice-claude" title="Rewrites Copilot-only references for Claude Code and installs to ~/.claude/skills/ after you review it.">Claude Code (convert)</button>
-    <button class="sk-btn sk-btn-secondary sk-choice-agents" title="Installs the original file unchanged to ~/.agents/skills/ (Codex, VS Code Copilot).">~/.agents/skills (as-is)</button>`, choiceEl);
+    <button class="sk-btn sk-btn-primary sk-choice-claude" title=${`Converts to a Claude Code ${dirs.claudeWhat}, rewriting Copilot-only references, and installs to ${dirs.claude} after you review it.`}>Claude Code (convert)</button>
+    <button class="sk-btn sk-btn-secondary sk-choice-agents" title=${`Installs the original file unchanged to ${dirs.asIs}`}>${dirs.asIs.replace(/\/$/, '')} (as-is)</button>`, choiceEl);
   choiceEl.querySelector<HTMLButtonElement>('.sk-choice-claude')?.addEventListener('click', () => {
     render(null, choiceEl);
     void convertAndPreview(el, target);
@@ -502,7 +511,7 @@ async function installCatalogItemDirect(el: HTMLButtonElement, target: CatalogIn
     } as Record<string, unknown>);
     el.textContent = 'Installed';
     el.classList.add('sk-btn-done');
-    const where = destination === 'agents' ? '~/.agents/skills/' : '';
+    const where = destination === 'agents' ? CHOICE_DIRS[target.kind]?.asIs ?? '' : '';
     setInstallMessage(el, `Installed as ${where}${res.filename}`);
   } catch (err: unknown) {
     el.textContent = 'Install';
@@ -511,7 +520,7 @@ async function installCatalogItemDirect(el: HTMLButtonElement, target: CatalogIn
   }
 }
 
-/** Convert an awesome-copilot skill for Claude Code, show it, and install only after "Save & Install". */
+/** Convert an awesome-copilot item for Claude Code, show it, and install only after "Save & Install". */
 async function convertAndPreview(el: HTMLButtonElement, target: CatalogInstallTarget): Promise<void> {
   const previewEl = el.closest('.sk-card')?.querySelector<HTMLElement>('.sk-card-preview');
   if (!previewEl) return;
@@ -519,13 +528,13 @@ async function convertAndPreview(el: HTMLButtonElement, target: CatalogInstallTa
   el.disabled = true;
   el.textContent = 'Converting...';
   try {
-    const res = await rpc<{ content: string; filename: string; note: string }>('convertCatalogSkill', {
-      path: target.path, title: target.title, description: target.description,
+    const res = await rpc<{ content: string; filename: string; note: string; kind: string; destination: string }>('convertCatalogSkill', {
+      path: target.path, kind: target.kind, title: target.title, description: target.description,
     } as Record<string, unknown>);
     el.textContent = 'Review Below';
     render(html`
       <details class="sk-preview-details" open>
-        <summary>Claude Code skill: ~/.claude/skills/${res.filename}</summary>
+        <summary>Claude Code ${CHOICE_DIRS[target.kind]?.claudeWhat ?? 'skill'}: ${res.destination}${res.filename}</summary>
         <p class="sk-install-msg">${res.note}</p>
         <pre class="sk-preview-code">${res.content}</pre>
         <div class="sk-preview-actions">
@@ -536,10 +545,10 @@ async function convertAndPreview(el: HTMLButtonElement, target: CatalogInstallTa
     previewEl.querySelector<HTMLElement>('.sk-btn-confirm')?.addEventListener('click', () => {
       void (async () => {
         try {
-          await rpc<{ ok: boolean }>('installSkill', { filename: res.filename, content: res.content } as Record<string, unknown>);
+          await rpc<{ ok: boolean }>('installSkill', { filename: res.filename, content: res.content, kind: target.kind } as Record<string, unknown>);
           el.textContent = 'Installed';
           el.classList.add('sk-btn-done');
-          render(html`<span class="sk-installed-msg">Converted skill installed to ~/.claude/skills/${res.filename}</span>`, previewEl);
+          render(html`<span class="sk-installed-msg">Converted and installed to ${res.destination}${res.filename}</span>`, previewEl);
         } catch (err: unknown) {
           render(html`<span class="sk-error">${err instanceof Error ? err.message : 'Install failed'}</span>`, previewEl);
         }

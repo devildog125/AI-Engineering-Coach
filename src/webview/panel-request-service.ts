@@ -27,7 +27,7 @@ import {
 } from './panel-llm';
 import { ANTHROPIC_RAW_BASE, getAnthropicSkillFiles, getCatalogItems, installedClaudeSkillNames } from './panel-catalog';
 import { readTextWithByteLimit } from './fetch-utils';
-import { toClaudeSkillMarkdown, toSkillName } from './skill-convert';
+import { parseFrontmatterList, splitSkillMarkdown, toClaudeAgentMarkdown, toClaudeRuleMarkdown, toClaudeSkillMarkdown, toSkillName, unmappedCopilotTools, withOriginalFrontmatter } from './skill-convert';
 import { validateDateFilter } from './panel-rpc';
 import { isNumber, isOptionalString, isRecord, isString, postError, postEvent, postResponse, RequestMessage, safeJoinUnder } from './panel-shared';
 
@@ -100,6 +100,21 @@ async function fetchAwesomeCopilotFile(catalogPath: string): Promise<string> {
 /** True for catalog paths that are safe to request: relative, no parent segments. */
 function isSafeCatalogPath(catalogPath: string): boolean {
   return !!catalogPath && !catalogPath.includes('..') && !catalogPath.startsWith('/') && !catalogPath.startsWith('\\');
+}
+
+/** Kinds of awesome-copilot item that can be converted for Claude Code. */
+type ClaudeConvertKind = 'skill' | 'agent' | 'instruction';
+
+/** Where each converted kind lives in Claude Code, under ~/.claude. */
+const CLAUDE_KIND_DIRS: Record<ClaudeConvertKind, string> = {
+  skill: 'skills',                                                 // ~/.claude/skills/<name>/SKILL.md
+  agent: 'agents',                                                 // ~/.claude/agents/<name>.md (subagent)
+  instruction: 'rules',                                            // ~/.claude/rules/<name>.md (path-scoped rule)
+};
+
+/** Read a convertible kind from untrusted params, defaulting to skill. */
+function toConvertKind(value: unknown): ClaudeConvertKind {
+  return value === 'agent' || value === 'instruction' ? value : 'skill';
 }
 
 /** Personal skills folder Skill Finder installs into: ~/.claude/skills.
@@ -668,12 +683,20 @@ ${UNTRUSTED_DATA_GUARD}`;
       return;
     }
 
-    const skillsDir = personalSkillsDir();                        // ~/.claude/skills: Claude Code + VS Code Copilot.
-    if (!skillsDir) {
+    const kind = toConvertKind(params.kind);
+    const homeDir = process.env.HOME || process.env.USERPROFILE;
+    if (!homeDir) {
       postError(this.webview, msg.id, 'Cannot determine home directory');
       return;
     }
-    const targetPath = safeJoinUnder(skillsDir, filename.split('/'), { allowedExts: ['.md'] });
+    // Skills are folders (<name>/SKILL.md); agents and rules are single files (<name>.md).
+    const segments = filename.split('/');
+    if (kind === 'skill' ? segments.length !== 2 || segments[1] !== 'SKILL.md' : segments.length !== 1) {
+      postError(this.webview, msg.id, 'Invalid filename');
+      return;
+    }
+    const baseDir = path.join(homeDir, '.claude', CLAUDE_KIND_DIRS[kind]); // skills / agents / rules.
+    const targetPath = safeJoinUnder(baseDir, segments, { allowedExts: ['.md'] });
     if (!targetPath) {
       postError(this.webview, msg.id, 'Invalid filename');
       return;
@@ -713,7 +736,10 @@ ${UNTRUSTED_DATA_GUARD}`;
       // Skills install unconverted to ~/.agents/skills when the user picks "agents" (Codex, VS Code
       // Copilot); otherwise ~/.claude/skills. Claude-converted skills go through convertCatalogSkill.
       const skillsBase = params.target === 'agents' ? path.join(homeDir, '.agents', 'skills') : path.join(homeDir, '.claude', 'skills');
-      const baseDir = kind === 'agent' ? path.join(homeDir, '.agents', 'agents') : skillsBase;
+      // As-is copies: agents → ~/.agents/agents, instructions → ~/.agents/instructions, skills per target.
+      const baseDir = kind === 'agent' ? path.join(homeDir, '.agents', 'agents')
+        : kind === 'instruction' ? path.join(homeDir, '.agents', 'instructions')
+          : skillsBase;
 
       const targetPath = safeJoinUnder(baseDir, [slug, filename], { allowedExts: ['.md'] });
       if (!targetPath) throw new Error('Invalid path');
@@ -727,8 +753,8 @@ ${UNTRUSTED_DATA_GUARD}`;
     }
   }
 
-  /** Convert an awesome-copilot skill into a Claude Code skill and return it for preview.
-   *  @param msg params: path (catalog SKILL.md path), title and description (frontmatter fallbacks)
+  /** Convert an awesome-copilot skill, agent or instruction for Claude Code and return it for preview.
+   *  @param msg params: path (catalog file), kind, title and description (frontmatter fallbacks)
    *  Responds with { content, filename, note }; nothing is written until the user saves it.
    *  Exists because Copilot skills reference Copilot-only features (#file, Copilot tool names,
    *  applyTo) that Claude Code doesn't understand. */
@@ -737,24 +763,39 @@ ${UNTRUSTED_DATA_GUARD}`;
     const catalogPath = isString(params.path) ? params.path : '';
     const title = isString(params.title) ? params.title : '';
     const description = isString(params.description) ? params.description : '';
+    const kind = toConvertKind(params.kind);
     if (!isSafeCatalogPath(catalogPath)) {
       postError(this.webview, msg.id, 'Invalid catalog path');
       return;
     }
     try {
       const original = await fetchAwesomeCopilotFile(catalogPath);
-      // Folder name in the catalog path is the skill's identity; the title is the fallback.
-      const name = toSkillName(catalogPath.split('/').at(-2) ?? '') || toSkillName(title) || 'converted-skill';
-      let converted = original;
+      // Identity: a skill's folder name, or an agent/instruction file name without its Copilot suffix.
+      const fileName = catalogPath.split('/').at(-1) ?? '';
+      const rawName = kind === 'skill' ? catalogPath.split('/').at(-2) ?? '' : fileName.replace(/\.(agent|instructions|chatmode)?\.?md$/i, '');
+      const name = toSkillName(rawName) || toSkillName(title) || `converted-${kind}`;
+      let body = original;
       let note = 'Converted to Claude Code: Copilot references rewritten and frontmatter fixed.';
       try {
-        converted = await this.rewriteSkillForClaude(original);    // Body: Copilot features → Claude Code equivalents.
+        body = await this.rewriteSkillForClaude(original, kind);   // Body: Copilot features → Claude Code equivalents.
       } catch {
         note = 'AI rewrite unavailable: only the frontmatter was converted. Check the body for Copilot-only references.';
       }
-      // Frontmatter is always rebuilt in code, so the result loads in Claude Code whatever the model returned.
-      const content = toClaudeSkillMarkdown(converted, name, description);
-      postResponse(this.webview, msg.id, { content, filename: `${name}/SKILL.md`, note });
+      // Frontmatter comes from the original file and is rebuilt in code, so tools / model / applyTo survive.
+      const merged = withOriginalFrontmatter(original, body);
+      const content = kind === 'agent' ? toClaudeAgentMarkdown(merged, name, description)
+        : kind === 'instruction' ? toClaudeRuleMarkdown(merged)
+          : toClaudeSkillMarkdown(merged, name, description);
+      const filename = kind === 'skill' ? `${name}/SKILL.md` : `${name}.md`;
+      if (kind === 'agent') {
+        // Name the Copilot tools the subagent won't have, so the user can add MCP servers or edit tools.
+        const dropped = unmappedCopilotTools(parseFrontmatterList(splitSkillMarkdown(original).fields.tools ?? ''));
+        if (dropped.length > 0) note += ` Copilot tools with no Claude Code equivalent were left out: ${dropped.join(', ')}.`;
+      }
+      if (kind === 'instruction' && !content.startsWith('---')) {
+        note += ' This rule has no file scope, so Claude Code loads it in every session.'; // Context cost warning.
+      }
+      postResponse(this.webview, msg.id, { content, filename, note, kind, destination: `~/.claude/${CLAUDE_KIND_DIRS[kind]}/` });
     } catch (error: unknown) {
       postError(this.webview, msg.id, error instanceof Error ? error.message : 'Conversion failed');
     }
@@ -762,8 +803,14 @@ ${UNTRUSTED_DATA_GUARD}`;
 
   /** Ask the language model to adapt a Copilot skill's instructions to Claude Code.
    *  @returns the rewritten SKILL.md text (frontmatter is normalized afterwards by the caller) */
-  private async rewriteSkillForClaude(original: string): Promise<string> {
-    const systemPrompt = `You convert GitHub Copilot skills (SKILL.md files) into Claude Code skills.
+  private async rewriteSkillForClaude(original: string, kind: ClaudeConvertKind = 'skill'): Promise<string> {
+    // Same rewrite rules for every kind; only the source and target file types differ.
+    const what = {
+      skill: 'GitHub Copilot skills (SKILL.md files) into Claude Code skills',
+      agent: 'GitHub Copilot custom agents (.agent.md files) into Claude Code subagents, whose body is the subagent system prompt',
+      instruction: 'GitHub Copilot instruction files (.instructions.md) into Claude Code rules (~/.claude/rules)',
+    }[kind];
+    const systemPrompt = `You convert ${what}.
 
 Rewrite ONLY what is Copilot-specific. Keep every instruction, step, example and code block otherwise unchanged.
 - "#file:<path>" or "#<path>" file references → "@<path>"
@@ -771,10 +818,10 @@ Rewrite ONLY what is Copilot-specific. Keep every instruction, step, example and
 - Copilot tool names → Claude Code tools: runCommands/runInTerminal/terminal → Bash; editFiles/createFile → Edit/Write; readFile → Read; search/codebase/findFiles → Grep/Glob; fetch/fetchWebpage → WebFetch; manage_todo_list → TaskCreate/TaskUpdate
 - "Copilot Chat", "agent mode", "the chat panel" → Claude Code, when they refer to the assistant running the skill
 - .github/copilot-instructions.md → CLAUDE.md; .github/prompts → .claude/commands; .github/skills → .claude/skills
-- Remove Copilot-only frontmatter keys (applyTo, mode, tools). Keep name and description.
+- Keep the frontmatter exactly as it is: it is converted separately.
 Do NOT change text where GitHub Copilot is the subject matter (for example a skill about configuring Copilot itself).
 
-Respond with ONLY the full converted SKILL.md, nothing else.
+Respond with ONLY the full converted file, nothing else.
 
 ${UNTRUSTED_DATA_GUARD}`;
     const text = await callLlm([

@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { describe, expect, it } from 'vitest';
-import { splitSkillMarkdown, toClaudeSkillMarkdown, toSkillName } from './skill-convert';
+import { mapCopilotModel, mapCopilotTools, parseFrontmatterList, splitSkillMarkdown, toClaudeAgentMarkdown, toClaudeRuleMarkdown, toClaudeSkillMarkdown, toSkillName, withOriginalFrontmatter } from './skill-convert';
 
 describe('toSkillName', () => {
   it('produces lowercase kebab-case names within 64 characters', () => {
@@ -54,5 +54,62 @@ describe('toClaudeSkillMarkdown', () => {
     const description = /description: "(.*)"/.exec(out)![1];
     expect(description.length).toBeLessThanOrEqual(1024);
     expect(description).not.toMatch(/\t/);
+  });
+});
+
+describe('parseFrontmatterList', () => {
+  it('reads flow lists, block lists and comma lists without splitting glob braces', () => {
+    expect(parseFrontmatterList("['codebase', \"editFiles\"]")).toEqual(['codebase', 'editFiles']);
+    expect(parseFrontmatterList('- search - runCommands')).toEqual(['search', 'runCommands']);
+    expect(parseFrontmatterList('**/*.{ts,tsx},src/**/*.py')).toEqual(['**/*.{ts,tsx}', 'src/**/*.py']);
+  });
+});
+
+describe('Copilot agent → Claude Code subagent', () => {
+  it('maps tools and Claude models, drops unknown tools and Copilot-only keys', () => {
+    const agent = [
+      '---',
+      "description: 'Reviews pull requests'",
+      "tools: ['codebase', 'editFiles', 'runCommands', 'problems', 'github/*']",
+      "model: 'Claude Sonnet 4.5'",
+      'handoffs: []',
+      '---',
+      'You are a reviewer.',
+    ].join('\n');
+    expect(toClaudeAgentMarkdown(agent, 'PR Reviewer', '')).toBe([
+      '---',
+      'name: pr-reviewer',
+      'description: "Reviews pull requests"',
+      'tools: Read, Grep, Glob, Edit, Write, Bash',             // problems / github/* have no Claude equivalent.
+      'model: sonnet',
+      '---',
+      'You are a reviewer.',
+    ].join('\n'));
+  });
+
+  it('omits tools when none map (inherit all) and model for non-Claude models', () => {
+    const out = toClaudeAgentMarkdown("---\ntools: ['problems']\nmodel: GPT-5\n---\nx", 'a', 'Does a.');
+    expect(out).not.toContain('tools:');
+    expect(out).not.toContain('model:');
+    expect(mapCopilotModel('Claude Opus 4.7')).toBe('opus');
+    expect(mapCopilotTools(['vscode/runCommands'])).toEqual(['Bash']);
+  });
+});
+
+describe('Copilot instructions → Claude Code rule', () => {
+  it('turns applyTo into paths', () => {
+    expect(toClaudeRuleMarkdown("---\ndescription: TS rules\napplyTo: '**/*.ts,**/*.tsx'\n---\nUse strict mode.")).toBe(
+      '---\npaths:\n  - "**/*.ts"\n  - "**/*.tsx"\n---\nUse strict mode.');
+  });
+
+  it('drops the frontmatter for rules that apply to every file', () => {
+    expect(toClaudeRuleMarkdown("---\napplyTo: '**'\n---\nBe concise.")).toBe('Be concise.');
+  });
+});
+
+describe('withOriginalFrontmatter', () => {
+  it('keeps the source frontmatter even if the rewrite dropped or changed it', () => {
+    const merged = withOriginalFrontmatter("---\ntools: ['search']\n---\nUse #file.", '---\nname: x\n---\nUse @path.');
+    expect(merged).toBe("---\ntools: ['search']\n---\nUse @path.");
   });
 });
