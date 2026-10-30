@@ -204,6 +204,10 @@ export class ConfigAnalyzer extends AnalyzerBase {
         if (workspace.harness !== prev.harness) {
           prev.harness = prev.harness + ', ' + workspace.harness;
         }
+        // A VS Code entry and a claude-* entry share one root: keep both harnesses' advice, not just the first's.
+        prev.suggestions = [...new Set([...prev.suggestions, ...workspace.suggestions])]; // Strings, so Set dedupes.
+        prev.hookCoverage ??= workspace.hookCoverage;                // Only the Claude entry analyzes hooks.
+        prev.hasHooks ||= workspace.hasHooks;
         continue;
       }
       seenRoots.set(workspace.rootPath, deduped.length);
@@ -213,16 +217,21 @@ export class ConfigAnalyzer extends AnalyzerBase {
     return deduped;
   }
 
-  private computeWorkspaceActivity(_f?: DateFilter): Map<string, { sessionCount: number; requestCount: number; lastTimestamp: number | null; lastDate: string | null; harness: string }> {
+  private computeWorkspaceActivity(f?: DateFilter): Map<string, { sessionCount: number; requestCount: number; lastTimestamp: number | null; lastDate: string | null; harness: string }> {
     const map = new Map<string, { sessionCount: number; requestCount: number; lastTimestamp: number | null; lastDate: string | null; harness: string }>();
+    const harnessCounts = new Map<string, Map<string, number>>(); // workspace → harness → sessions, to pick the dominant one.
 
-    for (const s of this.sessions) {
+    for (const s of this.filteredSessions(f)) {                     // Honour the dashboard's date/harness/workspace filter.
       const wsId = s.workspaceId;
       let entry = map.get(wsId);
       if (!entry) {
         entry = { sessionCount: 0, requestCount: 0, lastTimestamp: null, lastDate: null, harness: s.harness };
         map.set(wsId, entry);
+        harnessCounts.set(wsId, new Map());
       }
+      const counts = harnessCounts.get(wsId)!;
+      counts.set(s.harness, (counts.get(s.harness) ?? 0) + 1);
+      if (counts.get(s.harness)! > (counts.get(entry.harness) ?? 0)) entry.harness = s.harness; // Most sessions wins, not first seen.
       entry.sessionCount++;
       entry.requestCount += s.requestCount;
       const ts = s.lastMessageDate || s.creationDate;

@@ -39,6 +39,10 @@ const KNOWN_FILES: FilePattern[] = [
   // Claude Code subagents and custom slash commands (skipped at ~ so personal ones aren't counted as a workspace's).
   { relativePath: '.claude/agents', kind: 'agent', isDir: true, dirGlob: /\.md$/i, recurse: true, fileValidator: isAgentProfileFile, skipWhenRootIsHome: true },
   { relativePath: '.claude/commands', kind: 'prompt', isDir: true, dirGlob: /\.md$/i, recurse: true, skipWhenRootIsHome: true },
+  { relativePath: '.claude/CLAUDE.md', kind: 'claude-md' },        // Claude Code also reads instructions from inside .claude/.
+  { relativePath: '.claude/rules', kind: 'instruction', isDir: true, dirGlob: /\.md$/i, recurse: true, skipWhenRootIsHome: true }, // Scoped Claude rules.
+  // Nested CLAUDE.md (monorepo packages, docs/): walk the tree; dot-dirs and build/vendor dirs are skipped by the walker.
+  { relativePath: '.', kind: 'claude-md', isDir: true, dirGlob: /^CLAUDE\.md$/, recurse: true, skipWhenRootIsHome: true },
   { relativePath: '.mcp.json', kind: 'other' },                    // Claude Code project MCP servers.
   { relativePath: '.claude/settings.json', kind: 'hook-config' },
   { relativePath: '.claude/settings.local.json', kind: 'hook-config' },
@@ -46,6 +50,9 @@ const KNOWN_FILES: FilePattern[] = [
   { relativePath: '.cursorrules', kind: 'other' },
   { relativePath: '.gemini/settings.json', kind: 'other' },
 ];
+
+/** Directories no tree walk should enter: vendored, generated, or VCS internals. */
+const SKIP_DIRS = new Set(['node_modules', '.git', '__pycache__', '.venv', 'dist', 'build', '.next', 'target', 'vendor']);
 
 const CLOUD_PATH_PATTERNS = [
   /onedrive/i,
@@ -204,6 +211,8 @@ function scanDirRecursive(
     const childPath = path.join(fullPath, entry.name);
     const childRelative = path.join(relativeBase, entry.name);
     if (entry.isDirectory()) {
+      // Dot-dirs have their own KNOWN_FILES rows; vendor/build dirs would only yield someone else's config.
+      if (SKIP_DIRS.has(entry.name) || entry.name.startsWith('.')) continue;
       scanDirRecursive(childPath, childRelative, kind, dirGlob, files, depth - 1, fileValidator);
       continue;
     }
@@ -265,6 +274,13 @@ function dedupeConfigFiles(files: ConfigFileInfo[]): ConfigFileInfo[] {
   return deduped;
 }
 
+/** True for CLAUDE.md / CLAUDE.local.md at any depth (root, .claude/, or a package directory).
+ *  Exists because Claude Code reads all of them and the lean-file rule applies to each. */
+function isClaudeMdPath(relativePath: string): boolean {
+  const base = path.basename(relativePath);                        // Only the file name matters.
+  return base === 'CLAUDE.md' || base === 'CLAUDE.local.md';
+}
+
 function analyzeFile(fullPath: string, relativePath: string, kind: ConfigFileInfo['kind']): ConfigFileInfo {
   const content = fs.readFileSync(fullPath, 'utf-8');
   let lastModified: number | null = null;
@@ -284,7 +300,7 @@ function analyzeFile(fullPath: string, relativePath: string, kind: ConfigFileInf
   if (relativePath === '.github/copilot-instructions.md' && chars > COPILOT_INSTRUCTION_MAX_CHARS) {
     sizeVerdict = 'oversized';
   }
-  if ((relativePath === 'CLAUDE.md' || relativePath === 'CLAUDE.local.md') && lines > CLAUDE_MD_RECOMMENDED_LINES) {
+  if (isClaudeMdPath(relativePath) && lines > CLAUDE_MD_RECOMMENDED_LINES) { // Any CLAUDE.md, wherever it lives.
     sizeVerdict = 'oversized';
   }
 
@@ -326,8 +342,8 @@ function checkMarkdownQuality(content: string, relativePath: string): string[] {
     issues.push(`File exceeds ${COPILOT_INSTRUCTION_MAX_CHARS} characters -- Copilot code review truncates beyond this limit`);
   }
 
-  if ((relativePath === 'CLAUDE.md' || relativePath === 'CLAUDE.local.md') && lines.length > CLAUDE_MD_RECOMMENDED_LINES) {
-    issues.push(`File exceeds ${CLAUDE_MD_RECOMMENDED_LINES} lines -- keep CLAUDE.md lean and use @import for domain-specific rules`);
+  if (isClaudeMdPath(relativePath) && lines.length > CLAUDE_MD_RECOMMENDED_LINES) { // Any CLAUDE.md, wherever it lives.
+    issues.push(`File exceeds ${CLAUDE_MD_RECOMMENDED_LINES} lines -- keep CLAUDE.md lean and import domain-specific rules with @path (e.g. @docs/conventions.md)`);
   }
 
   return issues;
@@ -373,7 +389,7 @@ export function computeProgressiveDisclosureScore(files: ConfigFileInfo[]): numb
   const hasSkills = files.some(f => f.kind === 'skill');
   if (hasSkills) score += 25;
 
-  const scopedInstructionFiles = files.filter(f => f.kind === 'instruction' && f.relativePath.includes('instructions/'));
+  const scopedInstructionFiles = files.filter(f => f.kind === 'instruction' && (f.relativePath.includes('instructions/') || f.relativePath.startsWith('.claude/rules/'))); // Copilot or Claude scoped rules.
   const hasPrompts = files.some(f => f.kind === 'prompt');
   const hasAgents = files.some(f => f.kind === 'agent');
   if (scopedInstructionFiles.length >= 2 || (hasSkills && hasPrompts) || hasAgents) score += 25;
@@ -414,9 +430,12 @@ export function generateWorkspaceSuggestions(
   for (const f of files) {
     if (f.sizeVerdict === 'oversized') {
       if (f.kind === 'instruction' && f.lines > OVERSIZED_INSTRUCTION_LINES) {
-        suggestions.push(`${f.relativePath} has ${f.lines} lines -- split domain-specific rules into .github/instructions/*.instructions.md files or .github/skills/*/SKILL.md for progressive disclosure.`);
+        // Point at the scoped-rule layout the workspace's own harness reads.
+        suggestions.push(isClaudeWorkspace
+          ? `${f.relativePath} has ${f.lines} lines -- split domain-specific rules into .claude/rules/*.md or .claude/skills/*/SKILL.md so they load only when relevant.`
+          : `${f.relativePath} has ${f.lines} lines -- split domain-specific rules into .github/instructions/*.instructions.md files or .github/skills/*/SKILL.md for progressive disclosure.`);
       } else if (f.kind === 'claude-md') {
-        suggestions.push(`${f.relativePath} has ${f.lines} lines (recommended: <${CLAUDE_MD_RECOMMENDED_LINES}). Use @import syntax to load domain-specific rules from sub-files.`);
+        suggestions.push(`${f.relativePath} has ${f.lines} lines (recommended: <${CLAUDE_MD_RECOMMENDED_LINES}). Import domain-specific rules with @path (e.g. @docs/conventions.md) or move them to .claude/rules/.`);
       } else if (f.relativePath === '.github/copilot-instructions.md' && f.chars > COPILOT_INSTRUCTION_MAX_CHARS) {
         suggestions.push(`${f.relativePath} exceeds ${COPILOT_INSTRUCTION_MAX_CHARS} chars -- Copilot code review silently truncates beyond this. Move scoped rules to .github/instructions/*.instructions.md.`);
       }
@@ -443,7 +462,7 @@ export function generateWorkspaceSuggestions(
   }
 
   if (isClaudeWorkspace) {
-    const hasClaudeMd = files.some(f => f.kind === 'claude-md' && f.relativePath === 'CLAUDE.md');
+    const hasClaudeMd = files.some(f => f.kind === 'claude-md' && ['CLAUDE.md', '.claude/CLAUDE.md'].includes(f.relativePath)); // Either root location counts.
     if (!hasClaudeMd) {
       suggestions.push('Create a CLAUDE.md file for Claude Code instructions. Focus on deviations from standard practices -- Claude already knows common conventions.');
     }
@@ -469,7 +488,7 @@ export function buildFileTree(rootPath: string, maxDepth: number, maxEntries: nu
     if (depth > maxDepth || lines.length >= maxEntries) return;
     let entries: string[];
     try { entries = fs.readdirSync(dir).sort(); } catch { return; }
-    entries = entries.filter(e => !['node_modules', '.git', '__pycache__', '.venv', 'dist', 'build', '.next', 'target', 'vendor'].includes(e));
+    entries = entries.filter(e => !SKIP_DIRS.has(e));             // Same skip list as the config-file walker.
     for (const entry of entries) {
       if (lines.length >= maxEntries) { lines.push(prefix + '...'); return; }
       const full = path.join(dir, entry);

@@ -109,6 +109,16 @@ export function hasClaudeRate(modelId: string): boolean {
   return normalizeModel(modelId) in CLAUDE_RATES;                  // Same key normalization as pricing.
 }
 
+/** Context window of a Claude model, in tokens.
+ *  @param modelId raw model id from the transcript (`claude-opus-5-5`, `claude-opus-5-5[1m]`)
+ *  @returns 200K, 1M for the `[1m]` long-context variant, or null for a non-Claude model
+ *  Exists so context-utilization scoring uses Claude's real window instead of the 128K default. */
+export function claudeContextWindow(modelId: string): number | null {
+  if (!hasClaudeRate(modelId)) return null;                        // Not a Claude model we know: let the caller fall back.
+  // ponytail: every listed Claude model is 200K and `[1m]` is the only long-context tag Claude Code appends; add a per-model table if that stops being true.
+  return /\[1m\]$/i.test(modelId.trim()) ? 1_000_000 : 200_000;   // The tag survives on the request's raw modelId.
+}
+
 // Sonnet 4.x input price: the Copilot "1x" model, used as the reference for price-derived tiers.
 const TIER_REFERENCE_INPUT_USD = 3;
 
