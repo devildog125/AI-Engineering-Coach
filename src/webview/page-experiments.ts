@@ -7,6 +7,7 @@
 
 import { DateFilter } from '../core/types';
 import { rpc, vscode } from './shared';
+import { llmAvailable, llmUnavailableNote } from './capabilities';
 import { html, render, type ComponentChildren } from './render';
 import { SVG } from './svg-icons';
 import { renderAchievements } from './page-achievements';
@@ -137,6 +138,11 @@ export async function renderLevelUp(container: HTMLElement, filter: DateFilter):
       btn.classList.toggle('lab-tab-active', (btn as HTMLElement).dataset.labTab === tabId);
     }
 
+    if (tab.id === 'learning' && !llmAvailable()) {
+      // Learning is the one tab that calls the language model; the data tabs work without one.
+      render(html`<div class="lab-enable-prompt"><p>Learning needs a language model. ${llmUnavailableNote()}</p></div>`, tabContent);
+      return;
+    }
     if (isEnabled) {
       render(null, tabContent);
       await tab.render(tabContent, filter);
