@@ -174,6 +174,7 @@ async function runAnalysis(): Promise<void> {
     filter.fromDate = d.toISOString().slice(0, 10);
   }
   if (workspaceId) filter.workspaceId = workspaceId;
+  if (activeFilter.harness) filter.harness = activeFilter.harness; // The dashboard's harness pick was only a cache key before.
 
   let clusters: WorkflowCluster[] = [];
 

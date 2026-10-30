@@ -6,6 +6,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { classifyCuriosityActivity, hasRecordedToolEvidence, recordedInvestigation, recordedToolFiles, recordedTools, recordedWebDomains } from './curiosity-activity';
 import { createRequest } from './parser-shared';
+import type { SessionRequest } from './types';
 import { detectCuriosity } from './curiosity';
 
 describe('Recorded Curiosity tools', () => {
@@ -39,6 +40,18 @@ describe('Recorded Curiosity tools', () => {
     expect(classifyCuriosityActivity(make(['untrusted_read_file_and_write']))).toBe('unknownTool');
     expect(classifyCuriosityActivity(make(['functions.task']))).toBe('unknownTool');
     expect(classifyCuriosityActivity(make(['AskUserQuestion']))).toBe('clarification');
+  });
+
+  // Claude Code tool names (PascalCase, no prefix) map through the same identity sets.
+  it('classifies Claude Code tools by recorded capability', () => {
+    const make = (toolsUsed: string[], extra: Partial<SessionRequest> = {}) => createRequest({ messageText: 'Can you fix this?',
+      responseText: 'A reason.', toolsUsed, curiosity: detectCuriosity('Can you fix this?'), answerEvidence: 'final', ...extra });
+    expect(classifyCuriosityActivity(make(['NotebookEdit']))).toBe('action');
+    expect(classifyCuriosityActivity(make(['KillShell']))).toBe('action');
+    expect(classifyCuriosityActivity(make(['ExitPlanMode']))).toBe('direct');
+    expect(classifyCuriosityActivity(make(['Agent', 'Read'], { investigationDelegations: ['explore'] }))).toBe('repository'); // Subagent tools are merged into the turn.
+    expect(classifyCuriosityActivity(make(['Agent']))).toBe('unknownTool');                            // A subagent that left no evidence.
+    expect(classifyCuriosityActivity(make(['mcp__github__get_issue']))).toBe('unknownTool');          // MCP could have done anything.
   });
 
   it.each(['powershell', 'functions.powershell', 'read_powershell', 'functions.stop_powershell'])(

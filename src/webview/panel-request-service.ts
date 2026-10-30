@@ -1001,7 +1001,7 @@ Here are the top ${clusterSummaries.length} groups of similar prompts this devel
 
     const systemPrompt = `You are an expert at recommending AI coding agent customization files (skills, agents, instructions, hooks) for developers who use Claude Code, GitHub Copilot, or both.
 
-Items with source "anthropic" are official Claude Code skills. Skills from either source work in Claude Code and in VS Code Copilot. Agents and instructions from "awesome-copilot" only work in GitHub Copilot: recommend those only if the developer's harnesses include a Copilot harness.
+Items with source "anthropic" are official Claude Code skills. Skills from either source work in Claude Code and in VS Code Copilot. Agents and instructions from "awesome-copilot" are converted to Claude Code subagents and rules on install, so recommend them for any harness. Hooks from "awesome-copilot" only work in GitHub Copilot: recommend those only if the developer's harnesses include a Copilot harness.
 
 You will receive:
 1. The developer's context: languages, harnesses, topics, and which workspace they are currently analyzing

@@ -18,6 +18,7 @@ const READ_TOOLS = new Set([
   'rg', 'grep', 'glob', 'ls', 'find', 'list_dir', 'list_directory',
   'file_search', 'grep_search', 'semantic_search', 'codebase', 'get_errors',
   'search_workspace_symbols', 'lexical_code_search',
+  'notebookread',                                                  // Claude Code: reads a notebook cell.
 ]);
 const WEB_TOOLS = new Set([
   'web_search', 'web_fetch', 'websearch', 'webfetch', 'fetch_webpage', 'search_web',
@@ -27,16 +28,20 @@ const WRITE_TOOLS = new Set([
   'edit', 'create', 'write', 'edit_file', 'write_file', 'create_file', 'overwrite',
   'multiedit', 'multiedittool', 'multi_edit', 'replace_string_in_file', 'insert_edit_into_file',
   'apply_patch', 'apply_diff', 'patch',
+  'notebookedit',                                                  // Claude Code: edits a notebook cell.
 ]);
 const COMMAND_TOOLS = new Set([
   'bash', 'terminal', 'shell', 'shell_command', 'exec', 'exec_command', 'execute_command',
   'run_command', 'run_in_terminal', 'run_terminal_command', 'execute',
   'read_bash', 'read_process', 'get_terminal_output', 'stop_bash',
   'powershell', 'read_powershell', 'stop_powershell',
+  'bashoutput', 'killshell',                                       // Claude Code: background shell follow-ups.
 ]);
 const NEUTRAL_TOOLS = new Set([
   'report_intent', 'skill', 'manage_todo_list', 'todowrite', 'todoread', 'rename_session',
   'list_bash', 'list_powershell', 'task_complete',
+  // Claude Code: plan-mode switches, task-list bookkeeping and tool lookup say nothing about investigation.
+  'enterplanmode', 'exitplanmode', 'taskcreate', 'taskupdate', 'tasklist', 'taskget', 'taskoutput', 'taskstop', 'toolsearch',
 ]);
 const CLARIFICATION_TOOLS = new Set(['ask_user', 'askuserquestion', 'vscode_askquestions']);
 const INVESTIGATION_TOOLS = new Set(['task', 'agent', 'spawn_agent']);
@@ -51,8 +56,9 @@ export function hasRecordedToolEvidence(name: string): boolean {
     || INVESTIGATION_TOOLS.has(id) || name === 'multi_tool_use.parallel';
 }
 
-export function toolCapability(name: string): 'repository' | 'web' | 'write' | 'command' | 'neutral' | 'clarification' | 'unknown' {
+export function toolCapability(name: string): 'repository' | 'web' | 'write' | 'command' | 'neutral' | 'clarification' | 'delegation' | 'unknown' {
   const id = toolIdentity(name);
+  if (INVESTIGATION_TOOLS.has(id)) return 'delegation';          // Subagent launch: evidence comes from the merged subagent tools, if any.
   if (READ_TOOLS.has(id)) return 'repository';
   if (WEB_TOOLS.has(id)) return 'web';
   if (WRITE_TOOLS.has(id)) return 'write';
@@ -69,7 +75,10 @@ export function classifyCuriosityActivity(request: SessionRequest): CuriosityAct
     || request.toolConfirmations.some(confirmation => confirmation.isTerminal)) return 'action';
   if (request.isCanceled || request.endState === 'errored') return 'canceled';
   if (capabilities.includes('clarification')) return 'clarification';
-  if (capabilities.includes('unknown')) return 'unknownTool';
+  // Claude Code and Codex merge a subagent's tools into the owner turn, so a delegation with read/web evidence
+  // beside it is classifiable; a delegation that left no evidence (or Copilot's opaque task) is not.
+  const hasEvidence = capabilities.includes('repository') || capabilities.includes('web');
+  if (capabilities.includes('unknown') || (capabilities.includes('delegation') && !hasEvidence)) return 'unknownTool';
   if (request.curiosity?.kind !== 'analyzed' || !request.curiosity.features.question.count) return 'noQuestion';
   if (!request.answerEvidence || request.answerEvidence === 'missing' || request.endState === 'pending') return 'noAnswer';
   if (capabilities.includes('repository')) return 'repository';
