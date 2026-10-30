@@ -132,6 +132,11 @@ export interface DetectionRule {
   /** Whether this rule requires IDE-specific context (e.g. VS Code data) */
   requiresIdeContext: boolean;
 
+  /** Non-IDE harnesses an IDE-context rule also applies to (e.g. `[Claude]` once the
+   *  Claude parser records the signal the rule needs). IDE rules only see requests from
+   *  IDE harnesses plus these; ignored when `requiresIdeContext` is false. */
+  harnesses?: string[];
+
   /** What data scope the rule needs */
   scope: RuleScope;
 

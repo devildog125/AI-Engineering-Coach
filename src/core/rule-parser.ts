@@ -52,6 +52,8 @@ interface ParsedFrontmatter {
   severity: string;
   scope?: string;
   requiresIdeContext?: boolean;
+  /** Extra harnesses an IDE-context rule applies to, e.g. [Claude]. */
+  harnesses?: string[];
   version?: number;
   tags?: string[];
   thresholds?: Record<string, number>;
@@ -344,6 +346,8 @@ export function parseRule(markdown: string): DetectionRule | null {
     group: fm.group as PracticeGroup,
     severity: fm.severity as RuleSeverity,
     requiresIdeContext: fm.requiresIdeContext ?? false,
+    // Only keep a list of strings: anything else means "IDE harnesses only".
+    harnesses: Array.isArray(fm.harnesses) ? fm.harnesses.filter((h): h is string => typeof h === 'string') : undefined,
     scope,
     description: description || `Detects ${fm.name.toLowerCase()} patterns.`,
     descriptionTemplate: descriptionTemplate || '{{count}} occurrences detected.',
@@ -401,6 +405,7 @@ export function serializeRule(rule: DetectionRule): string {
   lines.push(`severity: ${rule.severity}`);
   lines.push(`scope: ${rule.scope}`);
   if (rule.requiresIdeContext) lines.push(`requiresIdeContext: true`);
+  if (rule.harnesses?.length) lines.push(`harnesses: [${rule.harnesses.join(', ')}]`); // Round-trip the harness scope.
   lines.push(`version: ${rule.version}`);
   if (rule.tags.length > 0) lines.push(`tags: [${rule.tags.join(', ')}]`);
   if (rule.extendsRule) lines.push(`extends: ${rule.extendsRule}`);

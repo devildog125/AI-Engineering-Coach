@@ -5,6 +5,7 @@ group: tool-mastery
 severity: low
 scope: requests
 requiresIdeContext: true
+harnesses: [Claude]
 version: 1
 tags: [tools, skills, domain]
 thresholds:

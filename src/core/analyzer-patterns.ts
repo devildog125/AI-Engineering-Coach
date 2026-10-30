@@ -12,7 +12,7 @@ import { AnalyzerBase } from './analyzer-base';
 import {
   computeWeeklyTrend, computeWeeklyScores,
 } from './detectors';
-import { getDetectorGroupCounts, runDetectors } from './detector-registry';
+import { getDetectorGroupCounts, runDetectors, shouldSkipIdeDetectors } from './detector-registry';
 import { SEVERITY_PENALTIES } from './detectors/scoring';
 
 function scoreToStatus(score: number): 'good' | 'needs-improvement' | 'critical' {
@@ -245,17 +245,17 @@ export class PatternsAnalyzer extends AnalyzerBase {
       return enriched;
     });
 
-    const skipIdeDetectors = !!(f?.harness && !f.harness.startsWith('Local Agent') && f.harness !== 'Xcode');
+    const skipIdeDetectors = shouldSkipIdeDetectors(f?.harness);    // Per-request scoping handles mixed views.
     const patterns = runDetectors(enrichedReqs, sessions, skipIdeDetectors);
     patterns.push(...contribution.patterns);
-    return this.buildAntiPatternResult(patterns, reqs, skipIdeDetectors, contribution.weekly);
+    return this.buildAntiPatternResult(patterns, reqs, skipIdeDetectors, contribution.weekly, f?.harness);
   }
 
-  private buildAntiPatternResult(patterns: AntiPattern[], reqs: SessionRequest[], skipIdeDetectors: boolean, weekly: WeeklyPatternObservation[]): AntiPatternData {
+  private buildAntiPatternResult(patterns: AntiPattern[], reqs: SessionRequest[], skipIdeDetectors: boolean, weekly: WeeklyPatternObservation[], harness?: string): AntiPatternData {
     const groupOrder: Record<string, number> = { 'prompt-quality': 0, 'session-hygiene': 1, 'code-review': 2, 'tool-mastery': 3 };
     patterns.sort((a, b) => (groupOrder[a.group] ?? 9) - (groupOrder[b.group] ?? 9) || b.occurrences - a.occurrences);
 
-    const groupDetectorCount = getDetectorGroupCounts(skipIdeDetectors);
+    const groupDetectorCount = getDetectorGroupCounts(skipIdeDetectors, harness); // Only rules that apply to this view.
     const weeklyTrend = computeWeeklyTrend(reqs, weekly);
     const weeklyScores = computeWeeklyScores(reqs, weekly, groupDetectorCount);
     const totalOccurrences = patterns.reduce((s, p) => s + p.occurrences, 0);

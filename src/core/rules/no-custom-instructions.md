@@ -5,6 +5,7 @@ group: tool-mastery
 severity: medium
 scope: requests
 requiresIdeContext: true
+harnesses: [Claude]
 version: 1
 tags: [tools, instructions, personalization]
 thresholds:

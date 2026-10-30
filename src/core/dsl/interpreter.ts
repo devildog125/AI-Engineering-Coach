@@ -623,6 +623,8 @@ function computeContextGaps(reqs: Record<string, unknown>[]): { gapCount: number
   // 1. Sub-agent / multi-agent usage
   const hasSubAgents = reqs.some(r => {
     const name = asStr(r.agentName);
+    // Claude Code launches subagents through its Agent (formerly Task) tool; its agentName is always 'Claude'.
+    if (name === 'Claude') return Array.isArray(r.toolsUsed) && r.toolsUsed.some(t => t === 'Agent' || t === 'Task');
     return name && name !== 'copilot' && asStr(r.agentMode) === 'agent';
   });
   if (!hasSubAgents) gaps.push('No sub-agent usage detected');

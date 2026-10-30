@@ -167,11 +167,41 @@ function buildExamples(
   return examples;
 }
 
+/** True for harnesses that carry IDE context (VS Code agent sessions and Xcode).
+ *  Exists so every IDE check uses one definition (it was copied in four places). */
+export function isIdeHarness(harness: string): boolean {
+  return harness.startsWith('Local Agent') || harness === 'Xcode'; // Local Agent, Local Agent (Insiders), Xcode.
+}
+
+/** True when an IDE-context rule should judge requests from this harness. */
+function ruleAppliesToHarness(rule: DetectionRule, harness: string): boolean {
+  return isIdeHarness(harness) || (rule.harnesses?.includes(harness) ?? false); // IDE harnesses plus opt-ins.
+}
+
+/** Narrow the detector context to the requests and sessions an IDE-context rule applies to.
+ *  @returns the context unchanged for ordinary rules, else one without other harnesses' data
+ *  Exists so the "All harnesses" view stops judging Claude/Codex sessions by Copilot-only rules.
+ *  Requests whose session is unknown (rule test fixtures) are kept, as before. */
+function scopeContextToRule(rule: DetectionRule, ctx: DetectorContext): DetectorContext {
+  if (!rule.requiresIdeContext) return ctx;                        // Harness-neutral rule: judge everything.
+  const sessions = ctx.sessions.filter(s => ruleAppliesToHarness(rule, s.harness));
+  if (sessions.length === ctx.sessions.length) return ctx;         // Nothing to drop.
+  // Requests are matched to sessions by id, because callers may pass enriched copies.
+  const harnessByRequest = new Map<string, string>();
+  for (const s of ctx.sessions) for (const r of s.requests) harnessByRequest.set(r.requestId, s.harness);
+  const reqs = ctx.reqs.filter(r => {
+    const harness = harnessByRequest.get(r.requestId);
+    return harness === undefined || ruleAppliesToHarness(rule, harness); // Unknown session: keep.
+  });
+  return { ...ctx, reqs, sessions };
+}
+
 export function executePipeline(
   pipeline: Pipeline,
   rule: DetectionRule,
-  ctx: DetectorContext,
+  rawCtx: DetectorContext,
 ): DetectorEmission {
+  const ctx = scopeContextToRule(rule, rawCtx);                    // IDE rules only see applicable harnesses.
   // ── Declarative pipeline path ──
   const rows: Record<string, unknown>[] = pipeline.scan === 'sessions'
     ? ctx.sessions as unknown as Record<string, unknown>[]

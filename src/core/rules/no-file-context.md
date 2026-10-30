@@ -5,6 +5,7 @@ group: prompt-quality
 severity: medium
 scope: requests
 requiresIdeContext: true
+harnesses: [Claude]
 version: 1
 tags: [prompt, context, files]
 thresholds:

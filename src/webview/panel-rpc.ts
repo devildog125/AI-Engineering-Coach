@@ -23,7 +23,7 @@ import {
   getRule,
   evaluateRule,
 } from '../core/rule-engine';
-import { runDetectors, runEmitters } from '../core/detector-registry';
+import { runDetectors, runEmitters, shouldSkipIdeDetectors } from '../core/detector-registry';
 import { parsePipeline, executePipeline, checkPipelineTrigger, resolveInheritance } from '../core/rule-pipeline';
 import { parseRule, serializeRule } from '../core/rule-parser';
 import { getRuleLayerInfo, getPersonalRulesDir, getProjectRulesDir } from '../core/rule-loader';
@@ -810,7 +810,7 @@ const rpcHandlers: TypedRpcHandlers = {
     const filter = validateDateFilter(params);
     const reqs = a.filterRequests(filter);
     const sessions = a.filterSessions(filter);
-    const skipIde = !!(filter?.harness && !filter.harness.startsWith('Local Agent') && filter.harness !== 'Xcode');
+    const skipIde = shouldSkipIdeDetectors(filter?.harness);       // Same gate as the Anti-Patterns page.
     const detectorResults = runDetectors(reqs, sessions, skipIde);
     const emissions = runEmitters(reqs, sessions, skipIde);
     const previews = getRulePreviewStats(reqs, sessions, skipIde, detectorResults, emissions);
@@ -883,7 +883,7 @@ const rpcHandlers: TypedRpcHandlers = {
     const filter = validateDateFilter(params);
     const reqs = a.filterRequests(filter);
     const sessions = a.filterSessions(filter);
-    const skipIde = !!(filter?.harness && !filter.harness.startsWith('Local Agent') && filter.harness !== 'Xcode');
+    const skipIde = shouldSkipIdeDetectors(filter?.harness);       // Same gate as the Anti-Patterns page.
     const detectorResults = runDetectors(reqs, sessions, skipIde);
     const emissions = runEmitters(reqs, sessions, skipIde);
     const previews = getRulePreviewStats(reqs, sessions, skipIde, detectorResults, emissions);
@@ -1038,7 +1038,7 @@ Explain why this session triggered the rule.`;
       const filter = isRecord(params?.filter) ? validateDateFilter(params.filter) : undefined;
       const reqs = a.filterRequests(filter);
       const sessions = a.filterSessions(filter);
-      const skipIde = !!(filter?.harness && !filter.harness.startsWith('Local Agent') && filter.harness !== 'Xcode');
+      const skipIde = shouldSkipIdeDetectors(filter?.harness);       // Same gate as the Anti-Patterns page.
 
       // Enrich requests with session info (needed by rules that reference workspaceName/sessionId)
       const sessionMap = new Map<string, { sessionId: string; workspaceName: string }>();
