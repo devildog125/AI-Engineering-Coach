@@ -52,6 +52,14 @@ import type { EditLocIndex } from '../core/edit-loc-diff';
  * (field scope) as truthy session values.
  */
 type DslRow = Record<string, unknown>;
+/** True when a Data Explorer value carries information: not null, '', 0, and not an empty array or object. */
+function isFilled(v: unknown): boolean {
+  if (v == null || v === '' || v === 0) return false;           // Scalars the explorer already treated as empty.
+  if (Array.isArray(v)) return v.length > 0;                   // [] means "no tools used", not a filled field.
+  if (typeof v === 'object') return Object.keys(v).length > 0; // {} likewise (variableKinds, compaction).
+  return true;
+}
+
 function pickRows(scope: string, reqs: SessionRequest[], sessions: Session[]): DslRow[] {
   const isSessionScope = scope === 'sessions' || scope === 'session';
   return (isSessionScope ? sessions : reqs) as unknown as DslRow[];
@@ -1248,7 +1256,7 @@ Explain why this session triggered the rule.`;
     const fieldSummaries = FIELD_SCHEMA.map(field => {
       const rows = pickRows(field.scope, reqs, sessions);
 
-      const values = rows.map(r => r[field.name]).filter(v => v != null && v !== '' && v !== 0);
+      const values = rows.map(r => r[field.name]).filter(isFilled);
       const nonEmpty = values.length;
       const total = rows.length;
       const fillRate = total > 0 ? Math.round((nonEmpty / total) * 100) : 0;

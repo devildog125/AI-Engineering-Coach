@@ -656,6 +656,12 @@ export interface StatsResult {
   totalSessions: number;
   totalWorkspaces: number;
   totalRequests: number;
+  /** Requests cancelled by the user; feeds the "Patient One" cancel-rate achievement. */
+  totalCanceled: number;
+  /** Distinct model ids seen across requests; feeds the "Model Explorer" achievement. */
+  uniqueModels: number;
+  /** Distinct tool names invoked across requests; feeds the "Toolsmith" achievement. */
+  uniqueTools: number;
 }
 
 export interface WorkflowCluster {
