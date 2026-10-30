@@ -50,7 +50,8 @@ export class PatternsAnalyzer extends AnalyzerBase {
       checkId: 'model-switch', name: 'Model Diversity', category: 'Efficiency',
       score, status: scoreToStatus(score),
       finding: `Using ${count} model(s): ${Array.from(models).join(', ')}`,
-      recommendation: count < 3 ? 'Try lighter models (gpt-4.1-mini, gemini-flash) for simple tasks to save premium requests.' : 'Good model diversity.',
+      // Harness-neutral: names a light model for Copilot and the /model switch for Claude Code.
+      recommendation: count < 3 ? 'Try lighter models for simple tasks: gpt-4.1-mini or gemini-flash in Copilot, or Sonnet/Haiku via /model in Claude Code.' : 'Good model diversity.',
     };
   }
 
@@ -86,7 +87,7 @@ export class PatternsAnalyzer extends AnalyzerBase {
       checkId: 'planning-mode', name: 'Planning-First Usage', category: 'Strategy',
       score, status: scoreToStatus(score),
       finding: `${planningReqs.length} of ${reqs.length} requests involve planning (${(ratio * 100).toFixed(1)}%).`,
-      recommendation: score < 70 ? 'Use planning mode before large tasks to help Copilot understand the big picture.' : 'Good use of planning.',
+      recommendation: score < 70 ? 'Use plan mode before large tasks (Copilot plan mode, or Shift+Tab in Claude Code) so the agent understands the big picture.' : 'Good use of planning.',
     };
   }
 
@@ -130,7 +131,7 @@ export class PatternsAnalyzer extends AnalyzerBase {
     return {
       checkId: 'feature-usage', name: 'Feature Breadth', category: 'Features',
       score, status: scoreToStatus(score),
-      finding: `Using ${count} distinct Copilot features.`,
+      finding: `Using ${count} distinct AI assistant features.`,       // Counts Copilot and Claude Code features alike.
       recommendation: score < 70 ? 'Explore more features: agents, slash commands, file references, custom instructions, skills.' : 'Great feature breadth.',
     };
   }
@@ -150,7 +151,7 @@ export class PatternsAnalyzer extends AnalyzerBase {
       checkId: 'parallelism', name: 'Parallelism', category: 'Productivity',
       score, status: scoreToStatus(score),
       finding: `Average ${avgParallel.toFixed(1)} concurrent sessions per active day.`,
-      recommendation: score < 70 ? 'Try running multiple Copilot sessions to keep work moving while waiting for responses.' : 'Good parallel session usage.',
+      recommendation: score < 70 ? 'Try running multiple agent sessions to keep work moving while waiting for responses.' : 'Good parallel session usage.',
     };
   }
 
@@ -201,7 +202,7 @@ export class PatternsAnalyzer extends AnalyzerBase {
       checkId: 'file-refs', name: 'File Context Usage', category: 'Context',
       score, status: scoreToStatus(score),
       finding: `${withRefs} of ${reqs.length} requests include file context (${(ratio * 100).toFixed(1)}%).`,
-      recommendation: score < 70 ? 'Reference files with #file to give Copilot better context about your codebase.' : 'Good use of file context.',
+      recommendation: score < 70 ? 'Reference files (#file in Copilot, @path in Claude Code) to give the agent better context about your codebase.' : 'Good use of file context.',
     };
   }
 

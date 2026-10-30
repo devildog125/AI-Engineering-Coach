@@ -329,3 +329,17 @@ describe('readSnippet', () => {
     expect(snippet.length).toBe(50);
   });
 });
+
+describe('generateWorkspaceSuggestions for Claude Code workspaces', () => {
+  it('suggests CLAUDE.md and .claude/commands instead of Copilot files', () => {
+    const suggestions = generateWorkspaceSuggestions([], null, true).join('\n');
+    expect(suggestions).toContain('CLAUDE.md');
+    expect(suggestions).toContain('.claude/commands');
+    expect(suggestions).not.toContain('copilot-instructions.md');   // Copilot file is irrelevant to Claude Code.
+    expect(suggestions).not.toContain('.prompt.md');
+  });
+
+  it('keeps Copilot suggestions for other workspaces', () => {
+    expect(generateWorkspaceSuggestions([], null, false).join('\n')).toContain('copilot-instructions.md');
+  });
+});

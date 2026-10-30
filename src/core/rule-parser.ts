@@ -334,6 +334,8 @@ export function parseRule(markdown: string): DetectionRule | null {
   const description = parseSection(body, 'Description');
   const descriptionTemplate = parseSection(body, 'When Triggered');
   const suggestionTemplate = parseSection(body, 'How to Improve');
+  // Parentheses are escaped because parseSection builds a regex from the heading.
+  const claudeSuggestionTemplate = parseSection(body, 'How to Improve \\(Claude Code\\)');
   const exampleTemplate = parseSection(body, 'Examples');
   const conditions = parseDetectionLogic(body);
   const tests = parseTestFixtures(body);
@@ -352,6 +354,7 @@ export function parseRule(markdown: string): DetectionRule | null {
     description: description || `Detects ${fm.name.toLowerCase()} patterns.`,
     descriptionTemplate: descriptionTemplate || '{{count}} occurrences detected.',
     suggestionTemplate: suggestionTemplate || 'Review your practices.',
+    claudeSuggestionTemplate: claudeSuggestionTemplate || undefined, // Absent section: generic advice only.
     exampleTemplate: exampleTemplate || '',
     maxExamples: 3,
     conditions,
@@ -438,6 +441,12 @@ export function serializeRule(rule: DetectionRule): string {
   lines.push(`# How to Improve`);
   lines.push(rule.suggestionTemplate);
   lines.push('');
+  if (rule.claudeSuggestionTemplate) {
+    // Round-trip the Claude Code advice so the Rule Editor doesn't drop it.
+    lines.push(`# How to Improve (Claude Code)`);
+    lines.push(rule.claudeSuggestionTemplate);
+    lines.push('');
+  }
   if (rule.exampleTemplate) {
     lines.push(`# Examples`);
     lines.push(rule.exampleTemplate);
@@ -493,6 +502,18 @@ function opToStr(op: RuleCondition['op']): string {
  * Fill a template string with variables.
  * Supports {{var}}, {{extra.var}}, and simple number formatting.
  */
+/** Advice template that fits the harnesses a finding judged.
+ *  @param rule the rule, with optional Claude Code advice
+ *  @param harnesses distinct harnesses of the judged rows (undefined when unknown)
+ *  @returns Claude advice for Claude-only findings, both for mixed findings, else the generic advice
+ *  Exists so Claude Code users stop being told to use Copilot-only features. */
+export function suggestionTemplateFor(rule: Pick<DetectionRule, 'suggestionTemplate' | 'claudeSuggestionTemplate'>, harnesses?: string[]): string {
+  const claude = rule.claudeSuggestionTemplate;
+  if (!claude || !harnesses?.includes('Claude')) return rule.suggestionTemplate; // No Claude data or no Claude advice.
+  if (harnesses.every(h => h === 'Claude')) return claude;         // Claude-only view: Claude advice only.
+  return `${rule.suggestionTemplate} In Claude Code: ${claude}`;   // Mixed view: both, clearly labelled.
+}
+
 export function fillTemplate(template: string, vars: Record<string, unknown>): string {
   return template.replaceAll(/\{\{(\w+(?:\.\w+)*)\}\}/g, (_match, path: string) => {
     const parts = path.split('.');

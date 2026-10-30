@@ -318,7 +318,10 @@ export class ConfigAnalyzer extends AnalyzerBase {
           group: 'tool-mastery',
           occurrences: score.totalRequests,
           description: `${harness}: ${score.totalRequests} requests with context score ${score.score}/100. Only ${fileRefPct}% include file references, ${instrPct}% use custom instructions.`,
-          suggestion: `In ${harness}, reference files with #file, add .instructions.md files, and use skills/prompts to provide richer context.`,
+          // Claude Code's equivalents of #file / .instructions.md / prompts are @path, CLAUDE.md and commands.
+          suggestion: harness === 'Claude'
+            ? 'In Claude Code, mention files with @path, keep project conventions in CLAUDE.md, and use skills, commands or subagents to provide richer context.'
+            : `In ${harness}, reference files with #file, add .instructions.md files, and use skills/prompts to provide richer context.`,
           examples: [],
           details: provDetails,
           weeklyHist: { labels: [], counts: [] },
@@ -501,7 +504,7 @@ export class ConfigAnalyzer extends AnalyzerBase {
       const mcpPaths = [
         path.join(ws.rootPath, '.vscode', 'mcp.json'),
         path.join(ws.rootPath, 'mcp.json'),
-        path.join(ws.rootPath, '.claude', 'mcp_servers.json'),
+        path.join(ws.rootPath, '.mcp.json'),                       // Claude Code's project MCP config (was a non-existent .claude/mcp_servers.json).
         path.join(ws.rootPath, '.cursor', 'mcp.json'),
       ];
       if (mcpPaths.some(p => safeFileExists(p))) {

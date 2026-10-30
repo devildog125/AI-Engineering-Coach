@@ -21,6 +21,9 @@ Detects when the vast majority of requests use a single model, missing opportuni
 # How to Improve
 Use lighter models (gpt-4.1-mini, gemini-flash) for simple tasks to save premium quota and get faster responses.
 
+# How to Improve (Claude Code)
+Switch models per task with `/model`: Haiku or Sonnet for quick edits and questions, Opus or Fable for hard reasoning. Subagents can run on a lighter model too.
+
 # Examples
 {{extra.model}}: {{extra.reqCount}} requests
 

@@ -22,6 +22,9 @@ Only {{extra.usagePct}}% of requests use custom instructions ({{extra.withInstru
 # How to Improve
 Create a .github/copilot-instructions.md or .instructions.md file in your workspace to give Copilot persistent context about your project conventions, stack, and coding style.
 
+# How to Improve (Claude Code)
+Run `/init` to generate a CLAUDE.md, then keep project conventions, build and test commands, and style rules there. Personal preferences go in `~/.claude/CLAUDE.md`.
+
 # Examples
 {{extra.withInstructions}} of {{total}} requests had custom instructions
 

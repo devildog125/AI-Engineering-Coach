@@ -196,6 +196,25 @@ function scopeContextToRule(rule: DetectionRule, ctx: DetectorContext): Detector
   return { ...ctx, reqs, sessions };
 }
 
+/** Distinct harnesses of the rows a rule judged.
+ *  @returns harness names, or undefined when the rows' sessions are unknown (test fixtures)
+ *  Exists so the finding's advice can match the harnesses it is about. */
+function rowHarnesses(pipeline: Pipeline, rows: Record<string, unknown>[], ctx: DetectorContext): string[] | undefined {
+  const found = new Set<string>();
+  if (pipeline.scan === 'sessions') {
+    for (const row of rows) if (typeof row.harness === 'string') found.add(row.harness); // Sessions carry their harness.
+  } else {
+    // Requests don't carry a harness: look it up through their session.
+    const harnessByRequest = new Map<string, string>();
+    for (const s of ctx.sessions) for (const r of s.requests) harnessByRequest.set(r.requestId, s.harness);
+    for (const row of rows) {
+      const harness = typeof row.requestId === 'string' ? harnessByRequest.get(row.requestId) : undefined;
+      if (harness) found.add(harness);
+    }
+  }
+  return found.size > 0 ? [...found] : undefined;
+}
+
 export function executePipeline(
   pipeline: Pipeline,
   rule: DetectionRule,
@@ -269,7 +288,7 @@ export function executePipeline(
     } catch { /* ignore severity expression errors */ }
   }
 
-  return { count, total, ratio, examples, extra, dynamicSeverity, matchedRows: matched };
+  return { count, total, ratio, examples, extra, dynamicSeverity, matchedRows: matched, harnesses: rowHarnesses(pipeline, rows, ctx) };
 }
 
 /**
@@ -345,6 +364,7 @@ export function resolveInheritance(rule: DetectionRule, visited: Set<string> = n
     description: rule.description || resolvedParent.description,
     descriptionTemplate: rule.descriptionTemplate || resolvedParent.descriptionTemplate,
     suggestionTemplate: rule.suggestionTemplate || resolvedParent.suggestionTemplate,
+    claudeSuggestionTemplate: rule.claudeSuggestionTemplate || resolvedParent.claudeSuggestionTemplate,
     exampleTemplate: rule.exampleTemplate || resolvedParent.exampleTemplate,
     // Merge thresholds (child wins)
     thresholds: { ...resolvedParent.thresholds, ...rule.thresholds },

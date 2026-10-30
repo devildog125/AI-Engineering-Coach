@@ -20,6 +20,9 @@ Detects sessions with only a single message, indicating missed refinement opport
 # How to Improve
 Use follow-up messages to refine Copilot's responses. Iterating produces much better results than one-shot prompts.
 
+# How to Improve (Claude Code)
+Reply in the same session to refine Claude's work instead of starting over. Press Esc to stop and redirect, and use `claude --continue` or `/resume` to pick an earlier session back up.
+
 # Examples
 {{extra.workspace}}: "{{message}}..."
 

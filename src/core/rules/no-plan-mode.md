@@ -22,6 +22,9 @@ Detects heavy agentic usage with no use of plan mode, which helps the agent unde
 # How to Improve
 Use plan mode (or /plan) before complex tasks. Planning helps the agent understand scope, break down work, and avoid wasted iterations.
 
+# How to Improve (Claude Code)
+Press Shift+Tab to switch to plan mode before complex tasks: Claude researches and proposes a plan you approve before it edits anything.
+
 # Examples
 Switch to Plan mode in the mode picker before starting large features
 Use /plan to outline an approach before coding

@@ -7,7 +7,7 @@ import { AntiPattern, OccurrenceDetail, PracticeGroup, Session, SessionRequest }
 import type { DetectionRule, DetectorEmission, RuleTemplateVars } from './types';
 import { getAllRules } from './rule-engine';
 import { registerAllBuiltinRules, loadPersonalRules, registerAllBuiltinMetrics } from './rule-loader';
-import { fillTemplate } from './rule-parser';
+import { fillTemplate, suggestionTemplateFor } from './rule-parser';
 import { parsePipeline, executePipeline, checkPipelineTrigger, resolveInheritance, isIdeHarness } from './rule-pipeline';
 import { isoWeek } from './helpers';
 
@@ -157,8 +157,9 @@ function emissionToAntiPattern(
   const description = rule.descriptionTemplate
     ? fillTemplate(rule.descriptionTemplate, vars as unknown as Record<string, unknown>)
     : `${rule.name}: ${emission.count} occurrences`;
-  const suggestion = rule.suggestionTemplate
-    ? fillTemplate(rule.suggestionTemplate, vars as unknown as Record<string, unknown>)
+  const suggestionTemplate = suggestionTemplateFor(rule, emission.harnesses); // Harness-fitting advice.
+  const suggestion = suggestionTemplate
+    ? fillTemplate(suggestionTemplate, vars as unknown as Record<string, unknown>)
     : '';
 
   const details: OccurrenceDetail[] = [];

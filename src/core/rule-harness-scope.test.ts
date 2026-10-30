@@ -8,7 +8,7 @@
  * rules counting Claude requests. */
 
 import { describe, it, expect } from 'vitest';
-import { parseRule, serializeRule } from './rule-parser';
+import { parseRule, serializeRule, suggestionTemplateFor } from './rule-parser';
 import { executePipeline, parsePipeline } from './rule-pipeline';
 import { createRequest, createSession } from './parser-shared';
 
@@ -60,5 +60,28 @@ describe('IDE rule harness scoping', () => {
 
   it('round-trips harnesses through serializeRule', () => {
     expect(serializeRule(ideRule('harnesses: [Claude]\n'))).toContain('harnesses: [Claude]');
+  });
+});
+
+describe('harness-fitting advice', () => {
+  const rule = { suggestionTemplate: 'Use #file.', claudeSuggestionTemplate: 'Use @path.' };
+
+  it('gives Claude advice when every judged request is from Claude', () => {
+    expect(suggestionTemplateFor(rule, ['Claude'])).toBe('Use @path.');
+  });
+
+  it('gives both, labelled, for a mixed view', () => {
+    expect(suggestionTemplateFor(rule, ['Local Agent', 'Claude'])).toBe('Use #file. In Claude Code: Use @path.');
+  });
+
+  it('keeps the generic advice without Claude data or Claude advice', () => {
+    expect(suggestionTemplateFor(rule, ['Local Agent'])).toBe('Use #file.');
+    expect(suggestionTemplateFor({ suggestionTemplate: 'Use #file.' }, ['Claude'])).toBe('Use #file.');
+  });
+
+  it('parses and round-trips a "How to Improve (Claude Code)" section', () => {
+    const parsed = parseRule(serializeRule({ ...ideRule(), suggestionTemplate: 'Generic.', claudeSuggestionTemplate: 'Claude.' }));
+    expect(parsed?.suggestionTemplate).toBe('Generic.');           // Generic section not swallowed by the Claude one.
+    expect(parsed?.claudeSuggestionTemplate).toBe('Claude.');
   });
 });

@@ -36,6 +36,10 @@ const KNOWN_FILES: FilePattern[] = [
   { relativePath: '.agents/skills', kind: 'skill', isDir: true, dirGlob: /SKILL\.md$/i, recurse: true, skipWhenRootIsHome: true },
   { relativePath: 'AGENTS.md', kind: 'instruction' },
   { relativePath: 'CLAUDE.md', kind: 'claude-md' },
+  // Claude Code subagents and custom slash commands (skipped at ~ so personal ones aren't counted as a workspace's).
+  { relativePath: '.claude/agents', kind: 'agent', isDir: true, dirGlob: /\.md$/i, recurse: true, fileValidator: isAgentProfileFile, skipWhenRootIsHome: true },
+  { relativePath: '.claude/commands', kind: 'prompt', isDir: true, dirGlob: /\.md$/i, recurse: true, skipWhenRootIsHome: true },
+  { relativePath: '.mcp.json', kind: 'other' },                    // Claude Code project MCP servers.
   { relativePath: '.claude/settings.json', kind: 'hook-config' },
   { relativePath: '.claude/settings.local.json', kind: 'hook-config' },
   { relativePath: 'CLAUDE.local.md', kind: 'claude-md' },
@@ -402,7 +406,8 @@ export function generateWorkspaceSuggestions(
   const suggestions: string[] = [];
 
   const hasAnyInstructions = files.some(f => f.kind === 'instruction' || f.kind === 'claude-md');
-  if (!hasAnyInstructions) {
+  // Claude Code workspaces get the CLAUDE.md suggestion below instead of Copilot's instructions file.
+  if (!hasAnyInstructions && !isClaudeWorkspace) {
     suggestions.push('Create a .github/copilot-instructions.md file with project conventions -- this is the single most impactful context file for GitHub Copilot.');
   }
 
@@ -423,13 +428,18 @@ export function generateWorkspaceSuggestions(
   }
 
   const hasSkills = files.some(f => f.kind === 'skill');
-  if (!hasSkills && files.some(f => f.kind === 'instruction' && f.lines > 100)) {
-    suggestions.push('Consider extracting domain-specific knowledge into .github/skills/*/SKILL.md files. Skills use progressive disclosure: only the name/description is loaded initially, full instructions load only when matched.');
+  if (!hasSkills && files.some(f => (f.kind === 'instruction' || f.kind === 'claude-md') && f.lines > 100)) {
+    // Point at the skills folder the workspace's own harness reads.
+    const skillsPath = isClaudeWorkspace ? '.claude/skills/*/SKILL.md' : '.github/skills/*/SKILL.md';
+    suggestions.push(`Consider extracting domain-specific knowledge into ${skillsPath} files. Skills use progressive disclosure: only the name/description is loaded initially, full instructions load only when matched.`);
   }
 
   const hasPrompts = files.some(f => f.kind === 'prompt');
   if (!hasPrompts) {
-    suggestions.push('Save reusable prompts as .github/prompts/*.prompt.md files. These can be invoked with /promptName in chat.');
+    // Claude Code's reusable prompts are custom commands; Copilot's are prompt files.
+    suggestions.push(isClaudeWorkspace
+      ? 'Save reusable prompts as .claude/commands/*.md files (or skills). These can be invoked with /name in Claude Code.'
+      : 'Save reusable prompts as .github/prompts/*.prompt.md files. These can be invoked with /promptName in chat.');
   }
 
   if (isClaudeWorkspace) {

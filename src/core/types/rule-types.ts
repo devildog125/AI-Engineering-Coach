@@ -36,6 +36,8 @@ export interface DetectorEmission {
   dynamicSeverity?: RuleSeverity;
   /** Raw matched rows for building rich occurrence details */
   matchedRows?: Record<string, unknown>[];
+  /** Distinct harnesses of the rows the rule judged, so advice can fit the harness. */
+  harnesses?: string[];
 }
 
 /**
@@ -149,6 +151,11 @@ export interface DetectionRule {
 
   /** Template for the suggestion shown when triggered */
   suggestionTemplate: string;
+
+  /** Optional Claude Code advice from a `# How to Improve (Claude Code)` section. Replaces
+   *  `suggestionTemplate` when every judged request came from Claude, and is appended when
+   *  the view mixes Claude with other harnesses. */
+  claudeSuggestionTemplate?: string;
 
   /** Template for generating example strings */
   exampleTemplate: string;
