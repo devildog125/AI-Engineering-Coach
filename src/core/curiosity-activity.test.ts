@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { describe, expect, it, vi } from 'vitest';
-import { classifyCuriosityActivity, hasRecordedToolEvidence, recordedInvestigation, recordedToolFiles, recordedTools, recordedWebDomains } from './curiosity-activity';
+import { classifyCuriosityActivity, hasRecordedToolEvidence, mcpServerFromTool, recordedInvestigation, recordedToolFiles, recordedTools, recordedWebDomains } from './curiosity-activity';
 import { createRequest } from './parser-shared';
 import type { SessionRequest } from './types';
 import { detectCuriosity } from './curiosity';
@@ -40,6 +40,16 @@ describe('Recorded Curiosity tools', () => {
     expect(classifyCuriosityActivity(make(['untrusted_read_file_and_write']))).toBe('unknownTool');
     expect(classifyCuriosityActivity(make(['functions.task']))).toBe('unknownTool');
     expect(classifyCuriosityActivity(make(['AskUserQuestion']))).toBe('clarification');
+  });
+
+  it.each([
+    ['mcp_github_get_issue', 'github'],                            // Copilot scheme.
+    ['mcp__github__get_issue', 'github'],                          // Claude Code scheme.
+    ['mcp__azure-devops__list', 'azure-devops'],
+    ['mcp_github', 'github'],                                      // No tool part.
+    ['Bash', null],
+  ])('reads the MCP server from %s', (tool, server) => {
+    expect(mcpServerFromTool(tool)).toBe(server);
   });
 
   // Claude Code tool names (PascalCase, no prefix) map through the same identity sets.

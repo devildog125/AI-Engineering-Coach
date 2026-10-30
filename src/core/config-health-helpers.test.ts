@@ -48,6 +48,13 @@ describe('resolveWorkspaceRoot', () => {
     const root = makeTempDir();
     expect(resolveWorkspaceRoot('codex-proj-1234', { id: 'codex-proj-1234', name: 'proj', path: root })).toBe(root);
   });
+
+  // Claude workspaces carry the project cwd as their path; it used to be read as a .jsonl log folder and dropped.
+  it('uses an existing Claude workspace cwd as the root path', () => {
+    const root = makeTempDir();
+    expect(resolveWorkspaceRoot('claude-proj-1234', { id: 'claude-proj-1234', name: 'proj', path: root })).toBe(root);
+    expect(resolveWorkspaceRoot('claude-gone', { id: 'claude-gone', name: 'gone', path: path.join(root, 'missing') })).toBeNull();
+  });
 });
 
 describe('scanConfigFiles', () => {

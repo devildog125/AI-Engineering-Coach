@@ -6,12 +6,12 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { fileUriToPath } from '../core/helpers';
 import { Analyzer } from '../core/analyzer';
 import { ParseResult } from '../core/parser';
 import { readFileSafe } from '../core/parser-shared';
-import { Workspace } from '../core/types';
 import { spotlight } from '../core/spotlight';
+import { resolveWorkspaceRoot, scanConfigFiles } from '../core/config-health-helpers';
+import { mcpServerFromTool } from '../core/curiosity-activity';
 import { exportSummaryFiles } from '../summary-export-vscode';
 import {
   callLlm,
@@ -1254,44 +1254,12 @@ ${contextSection}`;
     return { languages, harnesses, topics, workspaces };
   }
 
-  private resolveWorkspaceRoot(workspace: Workspace): string | null {
-    const wsJson = path.join(workspace.path, 'workspace.json');
-    try {
-      const data = readJsonRecord(wsJson);
-      if (data) {
-        const raw = isString(data.folder) ? data.folder : isString(data.workspace) ? data.workspace : '';
-        const decoded = fileUriToPath(raw).replace(/\/+$/, '');
-        if (decoded && fs.existsSync(decoded)) return decoded;
-      }
-    } catch {
-      // Ignore and fall through.
-    }
-
-    const wsYaml = path.join(workspace.path, 'workspace.yaml');
-    try {
-      const yamlText = fs.readFileSync(wsYaml, 'utf-8');
-      const folderMatch = yamlText.match(/folder:\s*['"]?([^'"\n]+)/);
-      if (folderMatch) {
-        const decoded = fileUriToPath(folderMatch[1]).replace(/\/+$/, '');
-        if (fs.existsSync(decoded)) return decoded;
-      }
-    } catch {
-      // Ignore and fall through.
-    }
-
-    if (fs.existsSync(path.join(workspace.path, 'package.json'))) {
-      return workspace.path;
-    }
-
-    return null;
-  }
-
   private resolveWorkspaceRoots(): Array<{ workspaceId: string; workspaceName: string; rootPath: string }> {
     if (!this.parseResult) return [];
 
     const roots: Array<{ workspaceId: string; workspaceName: string; rootPath: string }> = [];
     for (const [, workspace] of this.parseResult.workspaces) {
-      const rootPath = this.resolveWorkspaceRoot(workspace);
+      const rootPath = resolveWorkspaceRoot(workspace.id, workspace); // Shared resolver: knows Claude/Codex cwd workspaces.
       if (rootPath) {
         roots.push({ workspaceId: workspace.id, workspaceName: workspace.name, rootPath });
       }
@@ -1327,20 +1295,13 @@ ${contextSection}`;
     }
   }
 
+  /** Context files the repo gives its AI assistants: the Context Health scanner's list (CLAUDE.md, AGENTS.md,
+   *  .claude/*, .mcp.json, .github/copilot-instructions.md, .github/agents) plus Copilot's setup-steps workflow. */
   private getRepoContextFiles(rootPath: string): string[] {
-    const contextFiles = this.readDirectoryEntries(
-      path.join(rootPath, '.github', 'agents'),
-      entry => entry.endsWith('.yml') || entry.endsWith('.yaml') || entry.endsWith('.md'),
-      entry => `agents/${entry}`,
-    );
-
+    const contextFiles = scanConfigFiles(rootPath).map(f => f.relativePath); // One scanner for every harness.
     if (this.hasFile(path.join(rootPath, '.github', 'copilot-setup-steps.yml'))) {
-      contextFiles.push('copilot-setup-steps.yml');
+      contextFiles.push('.github/copilot-setup-steps.yml');       // Not markdown, so the scanner does not list it.
     }
-    if (this.hasFile(path.join(rootPath, '.github', 'copilot-instructions.md'))) {
-      contextFiles.push('copilot-instructions.md');
-    }
-
     return contextFiles;
   }
 
@@ -1500,10 +1461,8 @@ ${contextSection}`;
     for (const session of filteredSessions) {
       for (const request of session.requests) {
         for (const tool of request.toolsUsed) {
-          if (!tool.startsWith('mcp_')) continue;
-          const rest = tool.slice(4);
-          const underscoreIdx = rest.indexOf('_');
-          const serverId = underscoreIdx > 0 ? rest.slice(0, underscoreIdx) : rest;
+          const serverId = mcpServerFromTool(tool);                // Copilot mcp_x_y and Claude mcp__x__y.
+          if (!serverId) continue;
           mcpServerCounts.set(serverId, (mcpServerCounts.get(serverId) || 0) + 1);
         }
       }

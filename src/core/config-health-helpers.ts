@@ -9,6 +9,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { ConfigFileInfo, HookCoverageInfo, Workspace } from './types';
 import { fileUriToPath } from './helpers';
+import { findClaudeDirs } from './parser-claude';
 import {
   OVERSIZED_INSTRUCTION_LINES, COPILOT_INSTRUCTION_MAX_CHARS,
   CLAUDE_MD_RECOMMENDED_LINES,
@@ -83,14 +84,18 @@ function firstStringProperty(value: Record<string, unknown>, ...keys: string[]):
   return '';
 }
 
+/** Project directory for a workspace, or null when none can be found on disk.
+ *  @param id workspace id; the `claude-`/`codex-`/`opencode-` prefix says which harness recorded it
+ *  @param ws the workspace record; `path` is the project cwd for CLI harnesses, a storage folder for VS Code
+ *  @returns an existing directory to scan for config files, or null
+ *  Exists so Context Health, Learning and SDLC agree on where a workspace lives. */
 export function resolveWorkspaceRoot(id: string, ws: Workspace): string | null {
-  if (id.startsWith('claude-')) {
-    return resolveClaudeRoot(ws.path);
-  }
-  if (id.startsWith('codex-') || id.startsWith('opencode-')) {
-    return fs.existsSync(ws.path) ? ws.path : null;
-  }
-  return resolveVsCodeRoot(ws.path) ?? resolveCLIRoot(ws.path);
+  // Claude, Codex and OpenCode record the project cwd as the workspace path (parser-harnesses addSession).
+  // Claude's fallback path is ~/.claude/projects itself, which is a log store, never a repo.
+  if (id.startsWith('claude-')) return fs.existsSync(ws.path) && !findClaudeDirs().includes(ws.path) ? ws.path : null;
+  if (id.startsWith('codex-') || id.startsWith('opencode-')) return fs.existsSync(ws.path) ? ws.path : null;
+  return resolveVsCodeRoot(ws.path) ?? resolveCLIRoot(ws.path)
+    ?? (fs.existsSync(path.join(ws.path, 'package.json')) ? ws.path : null); // A bare project folder still counts.
 }
 
 function resolveVsCodeRoot(storagePath: string): string | null {
@@ -111,18 +116,6 @@ function resolveCLIRoot(storagePath: string): string | null {
       const cwd = cwdMatch[1].trim();
       if (fs.existsSync(cwd)) return cwd;
     }
-  } catch { /* ignore */ }
-  return null;
-}
-
-function resolveClaudeRoot(projectDir: string): string | null {
-  try {
-    const files = fs.readdirSync(projectDir).filter(f => f.endsWith('.jsonl'));
-    if (files.length === 0) return null;
-    const firstLine = fs.readFileSync(path.join(projectDir, files[0]), 'utf-8').split('\n')[0];
-    const parsed = JSON.parse(firstLine) as unknown;
-    if (!isRecord(parsed) || typeof parsed.cwd !== 'string') return null;
-    return fs.existsSync(parsed.cwd) ? parsed.cwd : null;
   } catch { /* ignore */ }
   return null;
 }

@@ -46,6 +46,18 @@ const NEUTRAL_TOOLS = new Set([
 const CLARIFICATION_TOOLS = new Set(['ask_user', 'askuserquestion', 'vscode_askquestions']);
 const INVESTIGATION_TOOLS = new Set(['task', 'agent', 'spawn_agent']);
 
+/** Server part of an MCP tool name.
+ *  @param name a recorded tool name
+ *  @returns `github` for Copilot's `mcp_github_get_issue` and Claude Code's `mcp__github__get_issue`; null for non-MCP tools
+ *  Exists because the two harnesses separate server and tool differently and SDLC counts calls per server. */
+export function mcpServerFromTool(name: string): string | null {
+  const m = /^mcp(__|_)(.+)$/.exec(name);                          // Separator decides which scheme this is.
+  if (!m) return null;
+  const [, sep, rest] = m;
+  const idx = rest.indexOf(sep);                                   // Split on the same separator.
+  return idx > 0 ? rest.slice(0, idx) : rest;                      // No second separator: the rest is the server.
+}
+
 export function toolIdentity(name: string): string {
   return name.slice(name.lastIndexOf('.') + 1).toLowerCase();
 }
