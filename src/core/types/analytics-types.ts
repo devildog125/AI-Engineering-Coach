@@ -203,6 +203,8 @@ export interface AiCreditModelBreakdown {
   cacheReadTokens: number;
   cacheWriteTokens: number;
   credits: number;
+  /** Requests with token data but no known list price (counted at 0 credits, shown as "unknown cost"). */
+  unpricedRequests: number;
   /** % of *finalizable* requests for this model with no token data (denominator excludes pending + no-data, same as Token Coverage). */
   missingPct: number;
   /** Number of finalizable requests (`requests - pendingRequests - noDataRequests`).
@@ -233,6 +235,8 @@ export interface AiCreditData {
   delegatedRequests: number;
   /** Finalizable requests = `totalRequests - pendingRequests - noDataRequests`. */
   finalizableRequests: number;
+  /** Requests with token data but no known list price; their cost is excluded from totals, not guessed. */
+  unpricedRequests: number;
   /** % of *finalizable* requests with no token data (matches Token Coverage semantics). */
   missingPct: number;
   avgCreditsPerRequest: number;

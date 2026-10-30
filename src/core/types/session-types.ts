@@ -36,6 +36,22 @@ export interface ModelUsage {
   cacheWriteTokens: number;
   /** Reasoning tokens (subset of output for some models, kept for diagnostics) */
   reasoningTokens?: number;
+  /** Cost in USD as computed by the harness itself (Claude Code `cost-state`), when it reports one. */
+  costUSD?: number;
+}
+
+/** Session-level cost report written by the harness itself (Claude Code `cost-state` lines).
+ *  Not used to replace per-request data: it is used to add API calls the
+ *  transcript never shows (background title/summary calls on other models). */
+export interface HarnessCostReport {
+  /** Harness-computed total for the session, in USD. */
+  totalCostUSD: number;
+  /** True when the harness itself could not price one of the models. */
+  hasUnknownModelCost: boolean;
+  /** Per-model totals keyed by `normalizeModel()` id, each with its `costUSD`. */
+  models: Record<string, ModelUsage>;
+  /** Models in `models` that no transcript call used (incl. subagents): calls only this report knows about. */
+  backgroundModels: string[];
 }
 
 export interface TodoItem {
@@ -86,6 +102,14 @@ export interface SessionRequest {
   cacheReadTokens: number | null;
   /** Cached tokens written / cache creation (subset of `promptTokens` when present); billed at cache-write rate */
   cacheWriteTokens: number | null;
+  /** Context size of the LAST model call in this request (input + cache read + cache write).
+   *  Set by harnesses whose `promptTokens` is cumulative across calls (Claude), so
+   *  context-window analysis is not inflated by multi-call turns. `undefined` means
+   *  `promptTokens` already is the last call's size (Copilot). */
+  contextTokens?: number | null;
+  /** Exact USD cost of this request at list price, priced per API call (Claude only).
+   *  `undefined` = not computed for this harness; `null` = a call used a model with no known price. */
+  costUSD?: number | null;
   /** Compaction/summarization event attached to this request, if one occurred */
   compaction: CompactionEvent | null;
   /** Final TODO list state at the end of this request (from manage_todo_list tool calls) */
@@ -163,12 +187,15 @@ export interface Session {
    *  `.devcontainer/` folder, because Codespaces never mount the project on
    *  the host. */
   hasDevcontainer?: boolean;
-  /** Size (in characters) of the workspace's `.github/copilot-instructions.md`
-   *  file at parse time, when discoverable. `0` means the file is missing or
+  /** Size (in characters) of the always-on instruction files: the workspace's
+   *  `.github/copilot-instructions.md` for Copilot, or the CLAUDE.md files Claude
+   *  Code loaded into the session for Claude, when discoverable. `0` means the file is missing or
    *  empty; `undefined` means the workspace folder path could not be resolved
    *  (e.g. CLI session without `cwd`, or multi-root workspace). Used by the
    *  `instruction-bloat` rule to detect always-on-context bloat. */
   customInstructionsBytes?: number;
+  /** Cost report the harness wrote itself (Claude Code `cost-state`), when present. */
+  harnessCostReport?: HarnessCostReport;
   /** Resolved project root for CLI harnesses that record cwd separately from
    *  launch location/source. Used by config-health workspace scans. */
   workspaceRootPath?: string;

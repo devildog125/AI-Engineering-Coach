@@ -41,6 +41,21 @@ interface RequestBilling {
   partialOutput: number;
   /** Provenance of the input/output values when `status === 'complete'`. */
   kind: 'exact' | 'session-aggregated';
+  /** True when tokens are known but the model has no list price: credits are 0 and shown as unknown. */
+  unpriced?: boolean;
+  /** Share of harness-reported calls that never appear in the transcript (Claude background
+   *  title/summary calls), attributed to this request. Billed under their own model. */
+  background?: BackgroundShare[];
+}
+
+/** One request's share of a background model's harness-reported usage. */
+interface BackgroundShare {
+  model: string;
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  credits: number;
 }
 
 /** Harnesses that emit authoritative token totals at session shutdown
@@ -66,8 +81,40 @@ function computeBilling(sessions: Session[]): Map<SessionRequest, RequestBilling
         attributePerRequest(r, map, isPending, preferPending);
       }
     }
+    attributeBackgroundUsage(session, map);                        // Calls only the harness's own cost report knows about.
   }
   return map;
+}
+
+/** Spread harness-reported usage for models the transcript never shows (Claude Code's
+ *  background title/summary calls) across the session's billed requests.
+ *  @param session a session with an optional `harnessCostReport`
+ *  @param out billing map; matching entries gain a `background` share
+ *  Exists because these calls are ~8% of real Claude Code spend but have no transcript line. */
+function attributeBackgroundUsage(session: Session, out: Map<SessionRequest, RequestBilling>): void {
+  const report = session.harnessCostReport;
+  if (!report) return;                                             // Only Claude Code writes this report.
+  // Only models no transcript call used: the rest are already priced per call.
+  const background = report.backgroundModels.map(model => [model, report.models[model]] as const).filter(([, usage]) => usage);
+  if (background.length === 0) return;
+  // Weight by each request's output tokens: background calls follow conversation activity.
+  const billed = session.requests.filter(r => out.get(r)?.status === 'complete');
+  if (billed.length === 0) return;                                 // Nothing to attach to.
+  const weights = billed.map(r => Math.max(0, out.get(r)!.output));
+  const totalWeight = weights.reduce((a, b) => a + b, 0);
+  billed.forEach((r, i) => {
+    const share = totalWeight > 0 ? weights[i] / totalWeight : 1 / billed.length; // Equal split when no output data.
+    const billing = out.get(r)!;
+    billing.background = background.map(([model, usage]) => ({
+      model,
+      input: (usage.inputTokens + usage.cacheReadTokens + usage.cacheWriteTokens) * share,
+      output: usage.outputTokens * share,
+      cacheRead: usage.cacheReadTokens * share,
+      cacheWrite: usage.cacheWriteTokens * share,
+      // Claude Code's own price for these calls; credits are cents (1 credit = $0.01).
+      credits: (usage.costUSD ?? 0) * 100 * share,
+    }));
+  });
 }
 
 /** Compute "missing %" using the same denominator semantics as Token Coverage:
@@ -99,6 +146,8 @@ interface AiCreditModelEntry {
   cacheReadTokens: number;
   cacheWriteTokens: number;
   credits: number;
+  /** Requests with tokens but no known price. */
+  unpricedRequests: number;
   harnesses: Set<string>;
 }
 
@@ -159,10 +208,12 @@ function attributePerRequest(
   preferPending: boolean = false,
 ): void {
   const t = resolveTokens(r.promptTokens, r.completionTokens, r.cacheReadTokens, r.cacheWriteTokens);
-  const credits = t.missing ? 0 : tokenCostInCredits(
-    r.modelId || 'untracked',
-    t.uncachedInput, t.output, t.cacheRead, t.cacheWrite,
-  );
+  // Claude requests carry an exact per-call list price; null means a model had no known price.
+  const priced = r.costUSD !== undefined;
+  const unpriced = !t.missing && r.costUSD === null;
+  const credits = t.missing || unpriced ? 0
+    : priced ? r.costUSD! * 100                                    // USD → credits (1 credit = $0.01).
+      : tokenCostInCredits(r.modelId || 'untracked', t.uncachedInput, t.output, t.cacheRead, t.cacheWrite);
   let status: RequestBilling['status'];
   let partialOutput = 0;
   if (!t.missing) {
@@ -205,6 +256,7 @@ function attributePerRequest(
     status,
     partialOutput,
     kind: 'exact',
+    unpriced,
   });
 }
 
@@ -371,6 +423,7 @@ export class ConsumptionAnalyzer extends AnalyzerBase {
       noDataRequests: summary.noDataCount,
       delegatedRequests: 0,
       finalizableRequests: reqs.length - summary.pendingCount - summary.noDataCount,
+      unpricedRequests: summary.unpricedCount,
       missingPct: computeMissingPct(reqs.length, summary.countedCount, summary.partialCount, summary.pendingCount, summary.noDataCount),
       avgCreditsPerRequest: summary.countedCount > 0 ? Math.round((summary.totalCredits / summary.countedCount) * 100) / 100 : 0,
       avgCreditsPerDay: Math.round((summary.totalCredits / Math.max(countedDays.size, 1)) * 100) / 100,
@@ -400,6 +453,7 @@ export class ConsumptionAnalyzer extends AnalyzerBase {
     partialCount: number;
     pendingCount: number;
     noDataCount: number;
+    unpricedCount: number;
     topRequests: AiCreditData['topRequests'];
   } {
     return {
@@ -417,6 +471,7 @@ export class ConsumptionAnalyzer extends AnalyzerBase {
       partialCount: 0,
       pendingCount: 0,
       noDataCount: 0,
+      unpricedCount: 0,
       topRequests: [],
     };
   }
@@ -441,6 +496,7 @@ export class ConsumptionAnalyzer extends AnalyzerBase {
     const harness = this.requestSessionMap.get(request)?.harness ?? 'unknown';
     this.tallyAiCreditTotals(summary, resolvedBilling);
     this.updateAiCreditModelEntry(summary.costByModel, model, resolvedBilling, harness);
+    this.addBackgroundModelEntries(summary.costByModel, resolvedBilling, harness);
     this.addAiCreditSeriesPoint(summary, model, request, resolvedBilling);
     summary.topRequests.push({
       timestamp: request.timestamp!,
@@ -466,12 +522,48 @@ export class ConsumptionAnalyzer extends AnalyzerBase {
     else if (billing.status === 'pending') summary.pendingCount++;
     else if (billing.status === 'no-data') summary.noDataCount++;
 
+    if (billing.unpriced) summary.unpricedCount++;                // Shown as "unknown cost", not guessed.
+
     if (billing.status !== 'complete') return;
     summary.totalInputTokens += billing.totalInput;
     summary.totalOutputTokens += billing.output;
     summary.totalCacheReadTokens += billing.cacheRead;
     summary.totalCacheWriteTokens += billing.cacheWrite;
     summary.totalCredits += billing.credits;
+    // Background calls (only in the harness's cost report) add to the same totals.
+    for (const share of billing.background ?? []) {
+      summary.totalInputTokens += share.input;
+      summary.totalOutputTokens += share.output;
+      summary.totalCacheReadTokens += share.cacheRead;
+      summary.totalCacheWriteTokens += share.cacheWrite;
+      summary.totalCredits += share.credits;
+    }
+  }
+
+  /** Book a request's background-call shares under their own models in the cost-by-model table.
+   *  Exists so Claude Code's hidden Haiku calls show up as a model line instead of vanishing.
+   *  Request counts are not incremented: these calls have no user request of their own. */
+  private addBackgroundModelEntries(
+    costByModel: Map<string, AiCreditModelEntry>,
+    billing: RequestBilling,
+    harness: string,
+  ): void {
+    if (billing.status !== 'complete') return;                     // Shares only exist on billed requests.
+    for (const share of billing.background ?? []) {
+      const entry = costByModel.get(share.model) ?? {
+        requests: 0, countedRequests: 0, partialRequests: 0, pendingRequests: 0, noDataRequests: 0,
+        missingRequests: 0, uncachedInputTokens: 0, inputTokens: 0, outputTokens: 0,
+        cacheReadTokens: 0, cacheWriteTokens: 0, credits: 0, unpricedRequests: 0, harnesses: new Set<string>(),
+      };
+      entry.harnesses.add(harness);                                // Which harness made the hidden calls.
+      entry.uncachedInputTokens += share.input - share.cacheRead - share.cacheWrite;
+      entry.inputTokens += share.input;
+      entry.outputTokens += share.output;
+      entry.cacheReadTokens += share.cacheRead;
+      entry.cacheWriteTokens += share.cacheWrite;
+      entry.credits += share.credits;
+      costByModel.set(share.model, entry);
+    }
   }
 
   private updateAiCreditModelEntry(
@@ -493,10 +585,12 @@ export class ConsumptionAnalyzer extends AnalyzerBase {
       cacheReadTokens: 0,
       cacheWriteTokens: 0,
       credits: 0,
+      unpricedRequests: 0,
       harnesses: new Set<string>(),
     };
     entry.harnesses.add(harness);
     entry.requests++;
+    if (billing.unpriced) entry.unpricedRequests++;               // Tokens known, price unknown.
     if (billing.status === 'complete') {
       entry.countedRequests++;
       entry.uncachedInputTokens += billing.uncachedInput;
@@ -530,22 +624,28 @@ export class ConsumptionAnalyzer extends AnalyzerBase {
     const totalTokens = billing.status === 'complete'
       ? billing.totalInput + billing.output
       : billing.partialOutput;
+    // Per-model token series: the request's own model plus any background-call shares.
+    const perModel: [string, number][] = [[model, totalTokens]];
+    if (billing.status === 'complete') {
+      for (const share of billing.background ?? []) perModel.push([share.model, share.input + share.output]);
+    }
     for (const [mapRef, key] of [[summary.dailyMap, day], [summary.weeklyMap, week]] as const) {
       if (!mapRef.has(key)) mapRef.set(key, new Map());
       const inner = mapRef.get(key)!;
-      inner.set(model, (inner.get(model) || 0) + totalTokens);
+      for (const [seriesModel, tokens] of perModel) inner.set(seriesModel, (inner.get(seriesModel) || 0) + tokens);
     }
-    // Accumulate total tokens (input + output) per workspace and per harness per day
+    // Workspace and harness series count every token the request caused, background calls included.
+    const requestTokens = perModel.reduce((sum, [, tokens]) => sum + tokens, 0);
     const session = this.requestSessionMap.get(request);
     const ws = session?.workspaceName || 'unknown';
     if (!summary.dailyTokensByWorkspace.has(ws)) summary.dailyTokensByWorkspace.set(ws, new Map());
     const wsDay = summary.dailyTokensByWorkspace.get(ws)!;
-    wsDay.set(day, (wsDay.get(day) || 0) + totalTokens);
+    wsDay.set(day, (wsDay.get(day) || 0) + requestTokens);
 
     const harness = session?.harness || 'unknown';
     if (!summary.dailyTokensByHarness.has(harness)) summary.dailyTokensByHarness.set(harness, new Map());
     const hDay = summary.dailyTokensByHarness.get(harness)!;
-    hDay.set(day, (hDay.get(day) || 0) + totalTokens);
+    hDay.set(day, (hDay.get(day) || 0) + requestTokens);
   }
 
   private buildAiCreditSeries(
@@ -625,6 +725,7 @@ export class ConsumptionAnalyzer extends AnalyzerBase {
         cacheReadTokens: Math.round(entry.cacheReadTokens),
         cacheWriteTokens: Math.round(entry.cacheWriteTokens),
         credits: entry.credits,
+        unpricedRequests: entry.unpricedRequests,
         missingPct: computeMissingPct(entry.requests, entry.countedRequests, entry.partialRequests, entry.pendingRequests, entry.noDataRequests),
         harnesses: Array.from(entry.harnesses).sort(),
       };

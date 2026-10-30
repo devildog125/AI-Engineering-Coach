@@ -10,6 +10,7 @@ import { AnalyzerBase } from './analyzer-base';
 import {
   DateFilter,
   Session,
+  SessionRequest,
   AntiPattern,
   OccurrenceDetail,
   ContextManagementData,
@@ -21,7 +22,7 @@ import {
   SessionTimelineEvent,
   WorkspaceContextSessionsData,
 } from './types';
-import { toDateStr } from './helpers';
+import { contextSize, toDateStr } from './helpers';
 import {
   CONTEXT_WINDOW_DEFAULT,
   CONTEXT_OPTIMAL_UTILIZATION,
@@ -126,7 +127,7 @@ export class ContextAnalyzer extends AnalyzerBase {
 
   /**
    * Infer the model's context window for a session from the largest native
-   * `promptTokens` value observed, rounded up to the nearest 32K bucket.
+   * per-request context size observed (`contextSize()`: last call for Claude, `promptTokens` otherwise), rounded up to the nearest 32K bucket.
    * Falls back to `CONTEXT_WINDOW_DEFAULT` when no native data exists.
    * (This is *not* token approximation — it's a model-window heuristic
    * derived from real harness data.)
@@ -134,7 +135,8 @@ export class ContextAnalyzer extends AnalyzerBase {
   private estimateSessionContextWindow(session: Session): number {
     let maxNative = 0;
     for (const r of session.requests) {
-      if (r.promptTokens != null && r.promptTokens > maxNative) maxNative = r.promptTokens;
+      const size = contextSize(r);                                 // Last call's context, not a multi-call sum.
+      if (size != null && size > maxNative) maxNative = size;
     }
     return maxNative > 0
       ? Math.max(CONTEXT_WINDOW_DEFAULT, Math.ceil(maxNative / 32_000) * 32_000)
@@ -144,7 +146,7 @@ export class ContextAnalyzer extends AnalyzerBase {
   /**
    * Per-request prompt-token series for a session.
    *
-   * Returns *only* native promptTokens reported by the harness — `0` for any
+   * Returns *only* native context sizes (`contextSize()`) reported by the harness — `0` for any
    * request without native data. (Token approximation has been removed; see
    * helpers.ts for rationale.)
    *
@@ -155,7 +157,8 @@ export class ContextAnalyzer extends AnalyzerBase {
   private estimateSessionTokens(session: Session): number[] {
     const out: number[] = [];
     for (const r of session.requests) {
-      out.push(r.promptTokens != null && r.promptTokens > 0 ? r.promptTokens : 0);
+      const size = contextSize(r);                                 // Per-request context fill.
+      out.push(size != null && size > 0 ? size : 0);
     }
     return out;
   }
@@ -197,10 +200,11 @@ export class ContextAnalyzer extends AnalyzerBase {
     };
   }
 
-  private estimateContextWindowFromRequests(requests: Array<{ promptTokens: number | null }>): number {
+  private estimateContextWindowFromRequests(requests: Array<Pick<SessionRequest, 'promptTokens' | 'contextTokens'>>): number {
     let maxObserved = 0;
     for (const request of requests) {
-      if (request.promptTokens != null && request.promptTokens > maxObserved) maxObserved = request.promptTokens;
+      const size = contextSize(request);                           // Largest single-call context observed.
+      if (size != null && size > maxObserved) maxObserved = size;
     }
     return maxObserved > 0
       ? Math.max(CONTEXT_WINDOW_DEFAULT, Math.ceil(maxObserved / 32_000) * 32_000)

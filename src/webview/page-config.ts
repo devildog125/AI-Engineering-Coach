@@ -7,14 +7,14 @@
 
 import { DateFilter, ConfigHealthData, WorkspaceConfigHealth, ConfigFileInfo, ContextProvisionScore, HookCoverageInfo, AgenticReadinessScore, ContextReviewResult, ContextReviewFinding } from '../core/types';
 import { TOKEN_DATA_AVAILABLE_FROM } from '../core/constants';
-import { rpc, COLORS, Chart, trackChart, destroyCharts } from './shared';
+import { rpc, COLORS, Chart, trackChart, destroyCharts, harnessColor } from './shared';
 import { html, render, StatCard, ComponentChildren } from './render';
 import { renderContextManagement } from './page-context-mgmt';
 import { llmAvailable, llmUnavailableNote } from './capabilities';
 
-/* Harness colors */
-const HC: Record<string, string> = { 'Local Agent': '#007acc', 'Local Agent (Insiders)': '#24bfa5', 'Xcode': '#147efb', 'Claude Code': '#d97706', 'GitHub Copilot CLI': '#8b5cf6', 'GitHub Copilot App': '#a371f7', 'Codex CLI': '#ec4899', 'OpenCode': '#10b981' };
-function hc(h: string): string { return HC[h] || COLORS.muted; }
+/** Harness color for Context Health, shared with the dashboard.
+ *  The old local map keyed 'Claude Code' / 'Codex CLI', which sessions never use, so Claude rendered grey. */
+function hc(h: string): string { return harnessColor(h, 0); }
 
 /** Active treemap chart reference + workspace data for review highlighting */
 let activeTreemapChart: Chart | null = null;

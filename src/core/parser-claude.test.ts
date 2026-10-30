@@ -14,6 +14,7 @@ import { execSync } from 'child_process';
 import { describe, it, expect } from 'vitest';
 import { EditLocIndex } from './edit-loc-diff';
 import { parseClaudeSessions } from './parser-claude';
+import { claudeCallCostUSD } from './claude-pricing';
 
 /** os.tmpdir() on Windows often returns 8.3 short names (e.g. TAMASB~1)
  *  that don't match readdirSync output. Resolve to the long form so
@@ -384,11 +385,14 @@ describe('parseClaudeSessions', () => {
       // Only ONE session — subagent merged into parent, not standalone
       expect(sessions).toHaveLength(1);
       expect(sessions[0].sessionId).toBe('parent-sess');
-      expect(sessions[0].requests).toHaveLength(2);
-      // Sorted by timestamp
+      // The subagent prompt was written by Claude, not the user: it folds into
+      // the parent turn that was running at the time instead of adding a request.
+      expect(sessions[0].requests).toHaveLength(1);
       expect(sessions[0].requests[0].messageText).toContain('parent prompt');
-      expect(sessions[0].requests[1].messageText).toContain('subagent task');
-      expect(sessions[0].requestCount).toBe(2);
+      expect(sessions[0].requestCount).toBe(1);
+      // Its tokens still count, added onto the parent turn.
+      expect(sessions[0].requests[0].promptTokens).toBe(150);
+      expect(sessions[0].requests[0].completionTokens).toBe(30);
       // lastMessageDate extends to the subagent's last assistant timestamp
       expect(sessions[0].lastMessageDate).toBe(new Date('2025-06-15T10:00:31Z').getTime());
     } finally {
@@ -639,5 +643,156 @@ describe('parseClaudeSessions', () => {
       expect(session.workspaceRootPath).toBe(cwd);
     });
     fs.rmSync(cwd, { recursive: true, force: true });
+  });
+});
+
+/** Assistant line for one content block of an API response; several share one message.id. */
+function makeCall(id: string, model: string, usage: Record<string, unknown>, ts = '2025-06-15T10:00:02Z', content: object[] = [{ type: 'text', text: 'ok' }]): object {
+  return { type: 'assistant', timestamp: ts, sessionId: 'sess-1', message: { id, role: 'assistant', model, content, usage, stop_reason: 'end_turn' } };
+}
+
+/** Parse one transcript and return its only session (fails the test when there isn't exactly one). */
+function parseOne(lines: object[]): ReturnType<typeof parseClaudeSessions>[number]['sessions'][number] {
+  let session: ReturnType<typeof parseClaudeSessions>[number]['sessions'][number] | undefined;
+  withProjectsDir('s.jsonl', lines, projectsDir => {
+    const sessions = parseClaudeSessions(projectsDir).flatMap(workspace => workspace.sessions);
+    expect(sessions).toHaveLength(1);                              // One transcript → one session.
+    session = sessions[0];
+  });
+  return session!;
+}
+
+describe('Claude parity: usage, cost and signals', () => {
+  it('counts usage once per message.id even when the response spans several lines', () => {
+    const usage = { input_tokens: 10, output_tokens: 100, cache_read_input_tokens: 1000, cache_creation_input_tokens: 0 };
+    const session = parseOne([
+      makeUser('hi'),
+      makeCall('msg_1', 'claude-opus-5-5', usage, '2025-06-15T10:00:01Z', [{ type: 'thinking', thinking: '' }]), // Same response,
+      makeCall('msg_1', 'claude-opus-5-5', usage, '2025-06-15T10:00:02Z'),                                        // second block.
+    ]);
+    const request = session.requests[0];
+    expect(request.promptTokens).toBe(1010);                       // Not 2020: duplicate line ignored.
+    expect(request.completionTokens).toBe(100);
+    expect(request.contextTokens).toBe(1010);
+    // Opus 5.5: 10 × $4 + 100 × $20 + 1000 × $0.20, per million tokens.
+    expect(request.costUSD).toBeCloseTo((10 * 4 + 100 * 20 + 1000 * 0.2) / 1e6, 12);
+  });
+
+  it('reports context size from the last call and billing input across all calls', () => {
+    const session = parseOne([
+      makeUser('do it'),
+      makeCall('msg_1', 'claude-sonnet-5', { input_tokens: 5, output_tokens: 1, cache_read_input_tokens: 100 }),
+      makeCall('msg_2', 'claude-sonnet-5', { input_tokens: 5, output_tokens: 1, cache_read_input_tokens: 200 }),
+    ]);
+    expect(session.requests[0].promptTokens).toBe(310);           // 105 + 205 billed.
+    expect(session.requests[0].contextTokens).toBe(205);          // Window holds only the last call.
+  });
+
+  it('marks cost unknown (null) when a call uses a model with no list price', () => {
+    const session = parseOne([makeUser('hi'), makeCall('msg_1', 'claude-unknown-9', { input_tokens: 1, output_tokens: 1 })]);
+    expect(session.requests[0].costUSD).toBeNull();
+  });
+
+  it('reads the last cost-state into a per-model report, merging [1m] variants', () => {
+    const session = parseOne([
+      makeUser('hi'),
+      makeCall('msg_1', 'claude-opus-5-5', { input_tokens: 1, output_tokens: 1 }),
+      { type: 'cost-state', sessionId: 'sess-1', totalCostUSD: 1, hasUnknownModelCost: false, modelUsage: {} },
+      { type: 'cost-state', sessionId: 'sess-1', totalCostUSD: 3, hasUnknownModelCost: false, modelUsage: {
+        'claude-opus-5-5[1m]': { inputTokens: 1, outputTokens: 2, cacheReadInputTokens: 3, cacheCreationInputTokens: 4, thinkingTokens: 0, costUSD: 1.5 },
+        'claude-opus-5-5': { inputTokens: 1, outputTokens: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, thinkingTokens: 0, costUSD: 0.5 },
+        'claude-haiku-5-5': { inputTokens: 9, outputTokens: 9, cacheReadInputTokens: 0, cacheCreationInputTokens: 0, thinkingTokens: 0, costUSD: 1 },
+      } },
+    ]);
+    expect(session.harnessCostReport?.totalCostUSD).toBe(3);      // Last cost-state wins.
+    expect(session.harnessCostReport?.models['claude-opus-5.5'].costUSD).toBe(2);
+    expect(session.harnessCostReport?.models['claude-opus-5.5'].inputTokens).toBe(2);
+    expect(session.harnessCostReport?.models['claude-haiku-5.5'].costUSD).toBe(1);
+  });
+
+  it('turns a typed slash command into a request and absorbs its skill body', () => {
+    const session = parseOne([
+      makeUser('<command-message>review</command-message>\n<command-name>/review</command-name>\n<command-args>PR 7</command-args>'),
+      makeUser('Base directory for this skill: ...', '2025-06-15T10:00:00Z', { isMeta: true }),
+      makeCall('msg_1', 'claude-sonnet-5', { input_tokens: 1, output_tokens: 1 }),
+    ]);
+    expect(session.requests).toHaveLength(1);                      // Body did not become its own request.
+    expect(session.requests[0].slashCommand).toBe('review');
+    expect(session.requests[0].messageText).toBe('/review PR 7');
+  });
+
+  it('ignores local-only commands that never reach the model', () => {
+    const session = parseOne([
+      makeUser('<command-name>/model</command-name>'),
+      makeUser('<local-command-stdout>Set model</local-command-stdout>'),
+      makeUser('real prompt', '2025-06-15T10:01:00Z'),
+      makeCall('msg_1', 'claude-sonnet-5', { input_tokens: 1, output_tokens: 1 }, '2025-06-15T10:01:01Z'),
+    ]);
+    expect(session.requests.map(r => r.messageText)).toEqual(['real prompt']);
+  });
+
+  it('records interrupts, plan mode, @file mentions and CLAUDE.md loads', () => {
+    const session = parseOne([
+      { type: 'attachment', sessionId: 'sess-1', attachment: { type: 'instructions', files: [{ path: '/p/CLAUDE.md', type: 'Project', content: 'x'.repeat(40) }] } },
+      makeUser('plan this @src/a.ts', '2025-06-15T10:00:00Z', { permissionMode: 'plan' }),
+      { type: 'attachment', sessionId: 'sess-1', attachment: { type: 'file', filename: '/p/src/a.ts' } },
+      makeCall('msg_1', 'claude-sonnet-5', { input_tokens: 1, output_tokens: 1 }),
+      makeUser('[Request interrupted by user]'),
+    ]);
+    const request = session.requests[0];
+    expect(request.agentMode).toBe('plan');
+    expect(request.isCanceled).toBe(true);
+    expect(request.variableKinds.file).toBe(1);
+    expect(request.referencedFiles).toContain('/p/src/a.ts');
+    expect(request.customInstructions).toEqual(['/p/CLAUDE.md']);
+    expect(session.customInstructionsBytes).toBe(40);
+  });
+
+  it('attaches a between-turn compaction to the next request', () => {
+    const session = parseOne([
+      makeUser('one'),
+      makeCall('msg_1', 'claude-sonnet-5', { input_tokens: 1, output_tokens: 1 }),
+      { type: 'system', subtype: 'compact_boundary', sessionId: 'sess-1', compactMetadata: { trigger: 'auto', preTokens: 180000, durationMs: 900 } },
+      makeUser('two', '2025-06-15T10:05:00Z'),
+      makeCall('msg_2', 'claude-sonnet-5', { input_tokens: 1, output_tokens: 1 }, '2025-06-15T10:05:01Z'),
+    ]);
+    expect(session.requests[0].compaction).toBeNull();
+    expect(session.requests[1].compaction).toMatchObject({ mode: 'full', contextLengthBefore: 180000, outcome: 'auto' });
+  });
+
+  it('builds a todo snapshot from TaskCreate and TaskUpdate', () => {
+    const session = parseOne([
+      makeUser('work'),
+      makeCall('msg_1', 'claude-sonnet-5', { input_tokens: 1, output_tokens: 1 }, '2025-06-15T10:00:02Z', [
+        { type: 'tool_use', id: 't1', name: 'TaskCreate', input: { subject: 'A', description: '', activeForm: '' } },
+        { type: 'tool_use', id: 't2', name: 'TaskUpdate', input: { taskId: '1', status: 'completed' } },
+      ]),
+      { type: 'user', sessionId: 'sess-1', message: { role: 'user', content: [
+        { type: 'tool_result', tool_use_id: 't1', content: 'ok' }, { type: 'tool_result', tool_use_id: 't2', content: 'ok' },
+      ] } },
+    ]);
+    expect(session.requests[0].todoSnapshot).toEqual([{ id: 1, title: 'A', status: 'completed' }]);
+  });
+});
+
+describe('claudeCallCostUSD', () => {
+  it('prices 5-minute and 1-hour cache writes separately', () => {
+    const usage = { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 3_000_000,
+      cache_creation: { ephemeral_5m_input_tokens: 1_000_000, ephemeral_1h_input_tokens: 2_000_000 } };
+    expect(claudeCallCostUSD('claude-opus-5-5', usage)).toBeCloseTo(5 + 2 * 8, 9); // $5 + 2 × $8.
+  });
+
+  it('applies fast mode, US-only inference and web search charges', () => {
+    const usage = { input_tokens: 1_000_000, output_tokens: 0, speed: 'fast', inference_geo: 'us', server_tool_use: { web_search_requests: 2 } };
+    expect(claudeCallCostUSD('claude-opus-5-5', usage)).toBeCloseTo(8 * 1.1 + 0.02, 9);
+  });
+
+  it('switches Haiku 5.5 to long-prompt rates above 100k prompt tokens', () => {
+    expect(claudeCallCostUSD('claude-haiku-5-5', { input_tokens: 100_000, output_tokens: 0 })).toBeCloseTo(0.01, 9);
+    expect(claudeCallCostUSD('claude-haiku-5-5', { input_tokens: 100_001, output_tokens: 0 })).toBeCloseTo(100_001 * 0.5 / 1e6, 9);
+  });
+
+  it('returns null for unknown models instead of guessing', () => {
+    expect(claudeCallCostUSD('gpt-5.5', { input_tokens: 1 })).toBeNull();
   });
 });
