@@ -41,6 +41,8 @@ interface ApPattern {
   details: ApOccurrence[];
   weeklyHist: { labels: string[]; counts: number[] };
   aggregate?: boolean;
+  /** Harnesses whose data this rule judged (e.g. Claude, Local Agent). */
+  harnesses?: string[];
 }
 
 interface GroupScore {
@@ -158,6 +160,15 @@ function severityIcon(sev: string): ComponentChildren {
 function severityBadge(sev: string): ComponentChildren {
   const s = SEVERITY_LABELS[sev] || SEVERITY_LABELS.low;
   return html`<span class="rule-severity-badge" style="--sev-color:${s.color}" title="${s.label} severity">${s.icon} ${s.label}</span>`;
+}
+
+/** Which harnesses' data a finding is about.
+ *  @param harnesses names from the rule's judged rows, or undefined for fixture/preview data
+ *  @returns one badge per harness, or nothing when the harness is unknown
+ *  Exists so you can tell at a glance whether a finding covers Claude Code or only Copilot. */
+function harnessBadges(harnesses: string[] | undefined): ComponentChildren {
+  if (!harnesses || harnesses.length === 0) return null;           // Unknown harness: say nothing rather than guess.
+  return harnesses.map(h => html`<span class="ap-harness-badge" title="Judged ${h} data">${h}</span>`);
 }
 
 function sourceBadge(source: RuleSource): ComponentChildren {
@@ -620,6 +631,7 @@ function renderFindings(
           <div class="ap-finding-header">
             ${severityIcon(p.severity)}
             <span class="ap-finding-name">${p.name}</span>
+            ${harnessBadges(p.harnesses)}
           </div>
           <div class="ap-finding-body">
             <div class="ap-finding-section ap-finding-problem">

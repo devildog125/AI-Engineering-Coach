@@ -37,7 +37,6 @@ match: agentMode == "agent" OR agentName != ""
 aggregate: count
 agentRatio: count / total
 planUsage: someWhere(all, "slashCommand", "plan") OR \
-  someWhere(all, "agentMode", "matches", "(?i)plan"slashCommand", "plan") OR \
   someWhere(all, "agentMode", "matches", "(?i)plan")
 agenticReqs: count
 check: planUsage == 0 AND total >= thresholds.minReqs AND agentRatio >= thresholds.agentRate

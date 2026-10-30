@@ -182,6 +182,7 @@ function emissionToAntiPattern(
     examples: emission.examples,
     details,
     weeklyHist: buildWeeklyHist(weekCounts),
+    harnesses: emission.harnesses?.slice().sort(), // Sorted so the badge order is stable between renders.
   };
 }
 

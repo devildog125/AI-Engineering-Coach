@@ -581,6 +581,9 @@ export interface AntiPattern {
   weeklyHist: { labels: string[]; counts: number[] };
   /** Aggregate checks use supporting examples, not per-request violations. */
   aggregate?: boolean;
+  /** Harnesses whose rows this rule judged, so the pane can say whose data a finding is about.
+   *  Undefined when the rows' sessions are unknown (rule-test fixtures and previews). */
+  harnesses?: string[];
 }
 
 export interface WeeklyPatternObservation {
