@@ -24,3 +24,6 @@ marketing/
 
 # Playwright test results
 test-results/
+
+# Serena MCP server's per-checkout project config
+.serena/
