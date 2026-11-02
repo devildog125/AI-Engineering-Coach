@@ -386,7 +386,7 @@ export function formatWorkflows(analyzer: Analyzer, f?: DateFilter) {
       sessions: c.sessions,
       workspaces: c.workspaces.length,
       harnesses: c.harnesses,
-      cancelRate: Math.round(c.cancelRate * 1000) / 10,
+      cancelRate: c.cancelRate, // Already a whole-number percent from analyzer-workflows; rescaling made it ×100.
       skillDraft: c.skillDraft.slice(0, 200),
     })),
     topWorkspaces: topN(wf.topWorkspaces, 5),

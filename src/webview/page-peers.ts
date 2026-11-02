@@ -38,7 +38,7 @@ function getTwitterShareUrl(data: ShareContext): string {
 }
 
 function getLinkedInShareUrl(data: ShareContext): string {
-  const text = `My AI coding stats:\n🔥 ${data.currentStreak}-day streak\n💻 ${formatNum(data.totalLoc)} AI lines of code\n⚡ Flow Score ${data.flowScore}\n\nTrack yours → ${REPO_URL}\n\n#AI #CodingStats #GitHub #Copilot`;
+  const text = `My AI coding stats:\n🔥 ${data.currentStreak}-day streak\n💻 ${formatNum(data.totalLoc)} AI lines of code\n⚡ Flow Score ${data.flowScore}\n\nTrack yours → ${REPO_URL}\n\n#AI #CodingStats #GitHub #Copilot #ClaudeCode`;
   return `https://www.linkedin.com/feed/?shareActive=true&text=${encodeURIComponent(text)}`;
 }
 

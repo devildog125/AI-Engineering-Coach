@@ -112,7 +112,7 @@ function buildSystemPrompt(): string {
   const fields = FIELD_SCHEMA.map(f => `  ${f.name}: ${f.type} — ${f.description}`).join('\n');
   const functions = FUNCTION_CATALOG.map(f => `  ${f.signature} — ${f.description}`).join('\n');
 
-  return `You are a rule compiler for AI Engineer Coach, a VS Code extension that analyzes coding assistant usage patterns.
+  return `You are a rule compiler for AI Engineer Coach, a VS Code extension that analyzes coding-assistant usage across harnesses (GitHub Copilot, Claude Code, Codex, OpenCode, Xcode).
 
 Your job: convert natural-language descriptions into structured rule markdown files.
 
@@ -142,6 +142,8 @@ name: Human Name
 group: prompt-quality|session-hygiene|code-review|tool-mastery
 severity: low|medium|high
 scope: requests|sessions
+requiresIdeContext: true   # only when the filter needs VS Code/Xcode-only fields (toolConfirmations, variableKinds, customInstructionsBytes); omit otherwise
+harnesses: [Claude]        # optional, with requiresIdeContext: extra harnesses the rule should also judge
 version: 1
 tags: [tag1, tag2]
 thresholds:
@@ -162,6 +164,9 @@ Template with {{count}}, {{total}}, {{pct}} placeholders.
 
 # How to Improve
 Actionable advice.
+
+# How to Improve (Claude Code)
+Optional. The same advice in Claude Code terms (CLAUDE.md, @path, /compact, skills, subagents, hooks); shown to Claude Code users instead of the generic advice.
 
 # Examples
 "{{messageText | truncate:80}}" or similar template.

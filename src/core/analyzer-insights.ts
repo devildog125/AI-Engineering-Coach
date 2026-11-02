@@ -610,10 +610,11 @@ export class InsightsAnalyzer extends AnalyzerBase {
     return [
       { feature: 'Sub-agents', description: 'Delegate sub-tasks to specialized agents', harnesses: ['Local Agent', 'Local Agent (Insiders)', 'Claude'] },
       { feature: 'MCP Tools', description: 'Model Context Protocol tool integration', harnesses: ['Local Agent', 'Local Agent (Insiders)', 'Claude'] },
-      { feature: 'Custom Instructions', description: 'Project-level AI instructions (.instructions.md)', harnesses: ['Local Agent', 'Local Agent (Insiders)', 'Claude'] },
+      { feature: 'Custom Instructions', description: 'Project-level AI instructions (.instructions.md, CLAUDE.md)', harnesses: ['Local Agent', 'Local Agent (Insiders)', 'Claude'] },
       { feature: 'Plan Mode', description: 'Separate planning step before implementation', harnesses: ['Local Agent', 'Local Agent (Insiders)', 'Claude'] },
-      { feature: 'Skills', description: 'Domain-specific knowledge modules', harnesses: ['Local Agent', 'Local Agent (Insiders)'] },
-      { feature: 'Slash Commands', description: '/fix, /explain, /tests, /doc', harnesses: ['Local Agent', 'Local Agent (Insiders)'] },
+      // Claude Code has both: Skills (.claude/skills, Skill tool) and slash commands (/review, custom .claude/commands).
+      { feature: 'Skills', description: 'Domain-specific knowledge modules', harnesses: ['Local Agent', 'Local Agent (Insiders)', 'Claude'] },
+      { feature: 'Slash Commands', description: '/fix, /explain, /tests (Copilot); /review, /init, custom commands (Claude Code)', harnesses: ['Local Agent', 'Local Agent (Insiders)', 'Claude'] },
       { feature: 'Multi-file Edits', description: 'Edit multiple files in a single turn', harnesses: ['Local Agent', 'Local Agent (Insiders)', 'Claude', 'Codex'] },
       { feature: 'Terminal Access', description: 'Run commands as part of agent workflow', harnesses: ['Local Agent', 'Local Agent (Insiders)', 'Claude', 'Codex', 'OpenCode'] },
       { feature: 'File References', description: 'Reference specific files in prompts', harnesses: ['Local Agent', 'Local Agent (Insiders)', 'Claude'] },
@@ -624,14 +625,17 @@ export class InsightsAnalyzer extends AnalyzerBase {
   private getUsedMigrationFeatures(reqs: Session['requests'], sessions: Session[]): Set<string> {
     const usedFeatures = new Set<string>();
     for (const request of reqs) {
-      if (request.agentName && request.agentName !== 'copilot') usedFeatures.add('Sub-agents');
+      // Claude's agentName is always 'Claude': only its Agent/Task tool shows real subagent use.
+      const claudeSubagent = request.agentName === 'Claude' && request.toolsUsed.some(tool => tool === 'Agent' || tool === 'Task');
+      if (request.agentName && request.agentName !== 'copilot' && (request.agentName !== 'Claude' || claudeSubagent)) usedFeatures.add('Sub-agents');
       if (request.toolsUsed.some(tool => tool.startsWith('mcp_'))) usedFeatures.add('MCP Tools');
       if (request.customInstructions.length > 0) usedFeatures.add('Custom Instructions');
       if (request.agentMode.includes('plan') || request.slashCommand === 'plan') usedFeatures.add('Plan Mode');
       if (request.skillsUsed.length > 0) usedFeatures.add('Skills');
       if (request.slashCommand) usedFeatures.add('Slash Commands');
       if (request.editedFiles.length > 1) usedFeatures.add('Multi-file Edits');
-      if (request.toolsUsed.some(tool => tool.includes('terminal') || tool.includes('runCommand'))) usedFeatures.add('Terminal Access');
+      // Claude Code's terminal tool is named 'Bash'.
+      if (request.toolsUsed.some(tool => tool.includes('terminal') || tool.includes('runCommand') || tool === 'Bash')) usedFeatures.add('Terminal Access');
       if (request.referencedFiles.length > 0 || (request.variableKinds['file'] > 0)) usedFeatures.add('File References');
     }
     const daySessions = new Map<string, number>();

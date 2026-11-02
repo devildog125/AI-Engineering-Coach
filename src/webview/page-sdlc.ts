@@ -203,7 +203,7 @@ export async function renderSdlc(container: HTMLElement, filter: DateFilter): Pr
           <div class="sdlc-section">
             <h3 class="sdlc-section-title">${SVG.robot} GitHub Configuration</h3>
             ${repos.length === 0
-              ? html`<div class="sdlc-empty">No workspace repos resolved. Open projects in VS Code to scan.</div>`
+              ? html`<div class="sdlc-empty">No project folders resolved from your sessions. Run a session from a project folder, or open one in VS Code, to scan.</div>`
               : html`<div class="sdlc-ghaw-list">
                   ${repos.map(r => {
                     const hasAny = r.agenticWorkflows.length > 0 || r.workflows.length > 0 || r.contextFiles.length > 0;
@@ -249,16 +249,16 @@ function generateRecommendations(
   mcpServers: McpServer[], awCount: number, wfCount: number, ctxCount: number,
 ): { icon: ComponentChildren; title: string; description: string }[] {
   const recs: { icon: ComponentChildren; title: string; description: string }[] = [];
-  if (total === 0) return [{ icon: SVG.lightbulb, title: 'Start using AI', description: 'Begin using GitHub Copilot to see SDLC insights.' }];
+  if (total === 0) return [{ icon: SVG.lightbulb, title: 'Start using AI', description: 'Begin using an AI coding assistant (GitHub Copilot, Claude Code, Codex) to see SDLC insights.' }];
 
   const reviewPct = (dist['code review'] ?? 0) / total * 100;
   if (reviewPct < 5) {
-    recs.push({ icon: SVG.warning, title: 'Add AI Reviews', description: 'Less than 5% of sessions involve code review. Use Copilot as a reviewer for PRs.' });
+    recs.push({ icon: SVG.warning, title: 'Add AI Reviews', description: 'Less than 5% of sessions involve code review. Use your AI assistant as a PR reviewer (Copilot code review, or /review in Claude Code).' });
   }
 
   const testPct = (dist['test'] ?? 0) / total * 100;
   if (testPct < 10) {
-    recs.push({ icon: SVG.warning, title: 'More AI Testing', description: 'Low test session ratio. Ask Copilot to write tests alongside features.' });
+    recs.push({ icon: SVG.warning, title: 'More AI Testing', description: 'Low test session ratio. Ask your AI assistant to write tests alongside features.' });
   }
 
   if (mcpServers.length === 0) {
@@ -270,7 +270,7 @@ function generateRecommendations(
   }
 
   if (ctxCount === 0) {
-    recs.push({ icon: SVG.pencilDoc, title: 'Add Context Files', description: 'Create .github/agents/ or copilot-instructions.md to give Copilot project-specific guidance.' });
+    recs.push({ icon: SVG.pencilDoc, title: 'Add Context Files', description: 'Create CLAUDE.md, AGENTS.md or .github/copilot-instructions.md to give your AI assistant project-specific guidance.' });
   }
 
   if (wfCount === 0) {

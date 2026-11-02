@@ -368,6 +368,21 @@ describe('context window estimation', () => {
     const data = getCtxMgmt([sess({ requests: flatTokenRequests(6, 1_000) })]);
     expect(data.estimatedContextWindow).toBe(CONTEXT_WINDOW_DEFAULT);
   });
+
+  // Claude model ids declare their window, so Claude sessions are no longer scored against 128K.
+  it.each([
+    ['claude-opus-5-5', 200_000],
+    ['claude-opus-5-5[1m]', 1_000_000],
+  ])('uses the known window for Claude model %s', (modelId, window) => {
+    const reqs = flatTokenRequests(6, 40_000).map(r => ({ ...r, modelId }));
+    expect(getCtxMgmt([sess({ harness: 'Claude', requests: reqs })]).estimatedContextWindow).toBe(window);
+  });
+
+  it('lets an observed peak above the known Claude window win', () => {
+    const reqs = flatTokenRequests(6, 50_000).map(r => ({ ...r, modelId: 'claude-opus-5-5' }));
+    reqs[3] = { ...reqs[3], promptTokens: 300_000 };              // Data outgrew the table: 300K → 320K bucket.
+    expect(getCtxMgmt([sess({ harness: 'Claude', requests: reqs })]).estimatedContextWindow).toBe(320_000);
+  });
 });
 
 /* ── Verdict classification ──────────────────────────────────────── */
@@ -454,6 +469,18 @@ describe('score calculation', () => {
     const scoreNoC = getCtxMgmt([sess({ sessionId: 'a', requests: reqsNoCompact })]).workspaces[0].score;
     const scoreWithC = getCtxMgmt([sess({ sessionId: 'b', requests: reqsWithCompact })]).workspaces[0].score;
     expect(scoreWithC).toBeLessThan(scoreNoC);
+  });
+
+  it('a manual /compact (Claude) neither counts nor reduces the score', () => {
+    const reqsNoCompact = flatTokenRequests(6, 60_000);
+    const reqsManual = flatTokenRequests(6, 60_000);
+    reqsManual[2] = req({ requestId: 'm1', timestamp: BASE_TS + 120_000, promptTokens: 60_000, compaction: compaction({ outcome: 'manual' }) });
+    reqsManual[4] = req({ requestId: 'm2', timestamp: BASE_TS + 240_000, promptTokens: 60_000, compaction: compaction({ outcome: 'manual' }) });
+
+    const plain = getCtxMgmt([sess({ sessionId: 'a', requests: reqsNoCompact })]);
+    const manual = getCtxMgmt([sess({ sessionId: 'b', harness: 'Claude', requests: reqsManual })]);
+    expect(manual.workspaces[0].score).toBe(plain.workspaces[0].score); // Following the advice costs nothing.
+    expect(manual.totalCompactions).toBe(0);                            // Only forced compactions are counted.
   });
 
   it('overall score is weighted by request count', () => {
@@ -622,6 +649,15 @@ describe('anti-pattern: compaction-storm', () => {
     expect(storm).toBeDefined();
     expect(storm!.severity).toBe('high');
     expect(storm!.occurrences).toBe(1);
+  });
+
+  it('does not trigger on manual /compact events', () => {
+    const reqs = flatTokenRequests(CONTEXT_COMPACTION_STORM_MIN + 2, 60_000);
+    for (let i = 0; i < CONTEXT_COMPACTION_STORM_MIN; i++) {
+      reqs[i] = req({ requestId: `manual-${i}`, timestamp: BASE_TS + i * 60_000, promptTokens: 60_000, compaction: compaction({ outcome: 'manual' }) });
+    }
+    const data = getCtxMgmt([sess({ harness: 'Claude', requests: reqs })]);
+    expect(data.antiPatterns.find(p => p.id === 'compaction-storm')).toBeUndefined(); // The user compacted on purpose.
   });
 
   it('does not trigger with few compaction events', () => {

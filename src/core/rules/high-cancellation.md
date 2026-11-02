@@ -20,6 +20,9 @@ Detects a high rate of cancelled requests, which wastes premium quota and indica
 # How to Improve
 Write clearer, more specific prompts. Wait for responses instead of cancelling prematurely.
 
+# How to Improve (Claude Code)
+If you often press Esc, give Claude the goal, constraints and relevant `@files` up front, or start in plan mode (Shift+Tab) to agree on the approach before it edits.
+
 # Examples
 "{{message}}..."
 

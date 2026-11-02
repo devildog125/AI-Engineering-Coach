@@ -46,7 +46,7 @@ test.describe('GitHub Copilot availability', () => {
     await expect(count).toBeHidden();
     await expect(unavailable).toBeVisible();
     await expect(unavailable).toBeDisabled();
-    await expect(unavailable).toHaveAttribute('title', 'Sign in to GitHub Copilot in VS Code to use this.');
+    await expect(unavailable).toHaveAttribute('title', 'Sign in to a VS Code language model provider (such as GitHub Copilot) to use this.');
 
     await pushCapabilities(page, true);
     await expect(review).toBeEnabled();

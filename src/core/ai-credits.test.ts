@@ -576,3 +576,28 @@ describe('getAiCredits — dailyTokensByWorkspace', () => {
     expect(ws.byWorkspace['proj-a'][dayIdx]).toBe(1500);
   });
 });
+
+/* ── getAiCredits: Claude Code exact cost and background calls ────── */
+
+describe('getAiCredits — Claude Code list-price cost', () => {
+  it('uses the per-request USD cost, marks unknown prices, and adds background calls under their own model', () => {
+    const priced = req({ requestId: 'p', modelId: 'claude-opus-5-5', promptTokens: 100, completionTokens: 30, costUSD: 0.5 });
+    const unknown = req({ requestId: 'u', modelId: 'claude-new-9', promptTokens: 100, completionTokens: 10, costUSD: null });
+    const session = sess([priced, unknown]);
+    // Claude Code's own report: Haiku 5.5 was only used by hidden background calls.
+    session.harnessCostReport = {
+      totalCostUSD: 0.6,
+      hasUnknownModelCost: false,
+      backgroundModels: ['claude-haiku-5.5'],
+      models: { 'claude-haiku-5.5': { inputTokens: 40, outputTokens: 4, cacheReadTokens: 0, cacheWriteTokens: 0, costUSD: 0.1 } },
+    };
+    const data = new Analyzer([session]).getAiCredits();
+    // $0.50 exact + $0.10 background = 60 credits; the unknown-price request adds nothing.
+    expect(data.totalCredits).toBeCloseTo(60, 6);
+    expect(data.unpricedRequests).toBe(1);
+    expect(data.costByModel['claude-opus-5.5'].credits).toBeCloseTo(50, 6);
+    expect(data.costByModel['claude-new-9'].unpricedRequests).toBe(1);
+    expect(data.costByModel['claude-haiku-5.5'].credits).toBeCloseTo(10, 6);
+    expect(data.costByModel['claude-haiku-5.5'].requests).toBe(0);  // Background calls are not user requests.
+  });
+});

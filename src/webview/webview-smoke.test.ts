@@ -23,6 +23,17 @@ beforeAll(() => {
   });
 });
 
+describe('dashboard shell nav gating', () => {
+  it('only gates Skill Finder on a language model, not Level Up', async () => {
+    const { getDashboardShellHtml } = await import('./dashboard-shell');
+    const host = document.createElement('div');
+    host.innerHTML = getDashboardShellHtml({ includeSkillFinder: true, includeLevelUp: true });
+    const li = (page: string) => host.querySelector(`a[data-page="${page}"]`)!.closest('li')!;
+    expect(li('skills').classList.contains('llm-only')).toBe(true);    // Skill Finder still needs the model.
+    expect(li('level-up').classList.contains('llm-only')).toBe(false); // Achievements/SDLC/Share are data-only.
+  });
+});
+
 describe('webview DOM smoke (jsdom)', () => {
   it.each([
     { pct: 50, text: '+50% WoW', state: 'trend-improving' },

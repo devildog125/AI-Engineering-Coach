@@ -478,31 +478,19 @@ function renderAchievementPage(
 
 /* ── Render ───────────────────────────────────────────────────────── */
 
-async function getAchievementConsumption(filter: DateFilter): Promise<{ modelTotals: Record<string, number> }> {
-  try {
-    return await rpc<{ modelTotals: Record<string, number> }>('getConsumption', filter as Record<string, unknown>);
-  } catch (error) {
-    if (error instanceof Error && error.message === 'Token reporting is temporarily disabled') {
-      return { modelTotals: {} };
-    }
-    throw error;
-  }
-}
-
 export async function renderAchievements(container: HTMLElement, filter: DateFilter): Promise<void> {
   render(html`<${LoadingScreen} message="Computing achievements..." />`, container);
 
-  const [stats, production, balance, antiPatterns, hourly] = await rpcAllSettled([
-    rpc<{ totalSessions: number; totalRequests: number; totalWorkspaces: number }>('getStats',  filter as Record<string, unknown>),
+  const [stats, production, balance, hourly] = await rpcAllSettled([
+    // getStats carries cancel / model / tool counts that work for every harness (getConsumption is feature-flagged off).
+    rpc<{ totalSessions: number; totalRequests: number; totalWorkspaces: number; totalCanceled: number; uniqueModels: number; uniqueTools: number }>('getStats',  filter as Record<string, unknown>),
     rpc<{ summary: { totalAiLoc: number; totalUserLoc: number } }>('getCodeProduction',  filter as Record<string, unknown>),
     rpc<{ maxStreak: number; weekendReqs: number; timeDistribution: { lateNight: number } } | null>('getWorkLifeBalance',  filter as Record<string, unknown>),
-    rpc<{ totalOccurrences: number }>('getAntiPatterns',  filter as Record<string, unknown>),
     rpc<{ hours: number[] }>('getHourlyDistribution',  filter as Record<string, unknown>),
   ] as const, [
-    { totalSessions: 0, totalRequests: 0, totalWorkspaces: 0 },
+    { totalSessions: 0, totalRequests: 0, totalWorkspaces: 0, totalCanceled: 0, uniqueModels: 0, uniqueTools: 0 },
     { summary: { totalAiLoc: 0, totalUserLoc: 0 } },
     null,
-    { totalOccurrences: 0 },
     { hours: [] },
   ] as const);
 
@@ -510,11 +498,10 @@ export async function renderAchievements(container: HTMLElement, filter: DateFil
   const dailyActivity = await rpc<DailyActivity>('getDailyActivity',  filter as Record<string, unknown>);
   const allSessions = await rpc<{ total: number }>('getSessions', { page: 1, pageSize: 1, filter: filter as Record<string, unknown> });
   const codeByLang = await rpc<{ byLanguage: { labels: string[] } }>('getCodeProduction',  filter as Record<string, unknown>);
-  const consumption = await getAchievementConsumption(filter);
-  const workflows = await rpc<{ clusters: { id: string }[] }>('getWorkflowOptimization',  filter as Record<string, unknown>);
 
   const avgReqsPerSession = allSessions.total > 0 ? stats.totalRequests / allSessions.total : 0;
-  const cancelRate = antiPatterns.totalOccurrences > 0 ? (antiPatterns.totalOccurrences / stats.totalRequests) * 100 : 0;
+  // Percent of requests the user cancelled — what "The Patient One" actually describes.
+  const cancelRate = stats.totalRequests > 0 ? (stats.totalCanceled / stats.totalRequests) * 100 : 0;
 
   const languages = codeByLang.byLanguage.labels.map(l => l.toLowerCase());
   let oldTechCount = 0;
@@ -538,8 +525,8 @@ export async function renderAchievements(container: HTMLElement, filter: DateFil
     totalDays: dailyActivity.labels.length,
     maxStreak: balance?.maxStreak ?? 0,
     uniqueLanguages: codeByLang.byLanguage.labels.length,
-    uniqueModels: Object.keys(consumption.modelTotals).length,
-    uniqueTools: workflows.clusters.length,
+    uniqueModels: stats.uniqueModels, // Distinct models used, not token-report entries.
+    uniqueTools: stats.uniqueTools,   // Distinct tools invoked, not repeated-prompt clusters.
     weekendRequests: balance?.weekendReqs ?? 0,
     lateNightRequests: balance?.timeDistribution.lateNight ?? 0,
     avgSessionRequests: avgReqsPerSession,

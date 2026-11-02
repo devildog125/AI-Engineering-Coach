@@ -21,6 +21,9 @@ import { Session, SessionRequest, PracticeGroup } from './types';
 import { runDetectors, runEmitters, invalidateDetectorRegistry } from './detector-registry';
 import { getAllRules, getRulePreviewStats } from './rule-engine';
 import { getRuleLayerInfo } from './rule-loader';
+import { parsePipeline } from './rule-pipeline';
+import { lex } from './dsl/lexer';
+import { parse } from './dsl/parser';
 import { isoWeek } from './helpers';
 
 /* ── Test data builders ── */
@@ -242,6 +245,25 @@ describe('Anti-Patterns E2E', () => {
       const validSeverities = ['high', 'medium', 'low'];
       for (const rule of getAllRules()) {
         expect(validSeverities, `${rule.id} has invalid severity: ${rule.severity}`).toContain(rule.severity);
+      }
+    });
+
+    // Reduce-expression errors are swallowed (evaluateExpression returns null on a throw),
+    // so a typo leaves the value null and the rule silently never fires. Lex+parse every
+    // expression here, because nothing else ever does. Caught no-plan-mode's spliced planUsage line.
+    it('every expression in every rule lexes and parses', () => {
+      for (const rule of getAllRules()) {
+        const pipeline = parsePipeline(rule);                      // Splits the ```detect block into expressions.
+        const exprs: [string, string][] = [                        // [label, expression] for a readable failure.
+          ['match', pipeline.matchExpr ?? ''],
+          ['check', pipeline.checkExpr ?? ''],
+          ['severity', pipeline.severityExpr ?? ''],
+          ...Object.entries(pipeline.reduceExprs ?? {}),            // planUsage, stats, emitCount, ...
+        ];
+        for (const [label, expr] of exprs) {
+          if (!expr) continue;                                      // Optional key the rule doesn't use.
+          expect(() => parse(lex(expr)), `${rule.id}: ${label}: ${expr}`).not.toThrow();
+        }
       }
     });
 

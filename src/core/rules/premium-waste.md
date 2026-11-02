@@ -20,6 +20,9 @@ Detects simple requests (short prompt, no code output) that use premium models u
 # How to Improve
 Use lighter models for quick questions and simple tasks. Reserve premium models for complex code generation.
 
+# How to Improve (Claude Code)
+Use `/model` to drop to Sonnet or Haiku for quick questions and simple edits, and keep Opus or Fable for complex work.
+
 # Examples
 {{extra.model}}: "{{message}}..."
 

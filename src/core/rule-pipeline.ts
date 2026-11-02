@@ -167,11 +167,60 @@ function buildExamples(
   return examples;
 }
 
+/** True for harnesses that carry IDE context (VS Code agent sessions and Xcode).
+ *  Exists so every IDE check uses one definition (it was copied in four places). */
+export function isIdeHarness(harness: string): boolean {
+  return harness.startsWith('Local Agent') || harness === 'Xcode'; // Local Agent, Local Agent (Insiders), Xcode.
+}
+
+/** True when an IDE-context rule should judge requests from this harness. */
+function ruleAppliesToHarness(rule: DetectionRule, harness: string): boolean {
+  return isIdeHarness(harness) || (rule.harnesses?.includes(harness) ?? false); // IDE harnesses plus opt-ins.
+}
+
+/** Narrow the detector context to the requests and sessions an IDE-context rule applies to.
+ *  @returns the context unchanged for ordinary rules, else one without other harnesses' data
+ *  Exists so the "All harnesses" view stops judging Claude/Codex sessions by Copilot-only rules.
+ *  Requests whose session is unknown (rule test fixtures) are kept, as before. */
+function scopeContextToRule(rule: DetectionRule, ctx: DetectorContext): DetectorContext {
+  if (!rule.requiresIdeContext) return ctx;                        // Harness-neutral rule: judge everything.
+  const sessions = ctx.sessions.filter(s => ruleAppliesToHarness(rule, s.harness));
+  if (sessions.length === ctx.sessions.length) return ctx;         // Nothing to drop.
+  // Requests are matched to sessions by id, because callers may pass enriched copies.
+  const harnessByRequest = new Map<string, string>();
+  for (const s of ctx.sessions) for (const r of s.requests) harnessByRequest.set(r.requestId, s.harness);
+  const reqs = ctx.reqs.filter(r => {
+    const harness = harnessByRequest.get(r.requestId);
+    return harness === undefined || ruleAppliesToHarness(rule, harness); // Unknown session: keep.
+  });
+  return { ...ctx, reqs, sessions };
+}
+
+/** Distinct harnesses of the rows a rule judged.
+ *  @returns harness names, or undefined when the rows' sessions are unknown (test fixtures)
+ *  Exists so the finding's advice can match the harnesses it is about. */
+function rowHarnesses(pipeline: Pipeline, rows: Record<string, unknown>[], ctx: DetectorContext): string[] | undefined {
+  const found = new Set<string>();
+  if (pipeline.scan === 'sessions') {
+    for (const row of rows) if (typeof row.harness === 'string') found.add(row.harness); // Sessions carry their harness.
+  } else {
+    // Requests don't carry a harness: look it up through their session.
+    const harnessByRequest = new Map<string, string>();
+    for (const s of ctx.sessions) for (const r of s.requests) harnessByRequest.set(r.requestId, s.harness);
+    for (const row of rows) {
+      const harness = typeof row.requestId === 'string' ? harnessByRequest.get(row.requestId) : undefined;
+      if (harness) found.add(harness);
+    }
+  }
+  return found.size > 0 ? [...found] : undefined;
+}
+
 export function executePipeline(
   pipeline: Pipeline,
   rule: DetectionRule,
-  ctx: DetectorContext,
+  rawCtx: DetectorContext,
 ): DetectorEmission {
+  const ctx = scopeContextToRule(rule, rawCtx);                    // IDE rules only see applicable harnesses.
   // ── Declarative pipeline path ──
   const rows: Record<string, unknown>[] = pipeline.scan === 'sessions'
     ? ctx.sessions as unknown as Record<string, unknown>[]
@@ -239,7 +288,7 @@ export function executePipeline(
     } catch { /* ignore severity expression errors */ }
   }
 
-  return { count, total, ratio, examples, extra, dynamicSeverity, matchedRows: matched };
+  return { count, total, ratio, examples, extra, dynamicSeverity, matchedRows: matched, harnesses: rowHarnesses(pipeline, rows, ctx) };
 }
 
 /**
@@ -315,6 +364,7 @@ export function resolveInheritance(rule: DetectionRule, visited: Set<string> = n
     description: rule.description || resolvedParent.description,
     descriptionTemplate: rule.descriptionTemplate || resolvedParent.descriptionTemplate,
     suggestionTemplate: rule.suggestionTemplate || resolvedParent.suggestionTemplate,
+    claudeSuggestionTemplate: rule.claudeSuggestionTemplate || resolvedParent.claudeSuggestionTemplate,
     exampleTemplate: rule.exampleTemplate || resolvedParent.exampleTemplate,
     // Merge thresholds (child wins)
     thresholds: { ...resolvedParent.thresholds, ...rule.thresholds },

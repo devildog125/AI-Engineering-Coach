@@ -88,10 +88,16 @@ export class DashboardAnalyzer extends AnalyzerBase {
 
   getStats(f?: DateFilter): StatsResult {
     const sessions = this.filteredSessions(f);
+    // Flatten once: the achievements page needs request-level counts (cancels, distinct models and tools)
+    // that work for every harness, not proxies from token reporting or prompt clusters.
+    const reqs = sessions.flatMap(s => s.requests);
     return {
       totalSessions: sessions.length,
       totalWorkspaces: new Set(sessions.map(s => s.workspaceName)).size,
       totalRequests: sessions.reduce((s, sess) => s + sess.requestCount, 0),
+      totalCanceled: reqs.filter(r => r.isCanceled).length,                         // Requests the user aborted mid-response.
+      uniqueModels: new Set(reqs.flatMap(r => r.modelId ? [r.modelId] : [])).size, // Distinct model ids, blanks skipped.
+      uniqueTools: new Set(reqs.flatMap(r => r.toolsUsed)).size,                    // Distinct tool names actually invoked.
     };
   }
 

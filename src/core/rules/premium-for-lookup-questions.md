@@ -21,6 +21,9 @@ Detects "lookup-style" questions ("what is X?", "where is Y?", "how do I Z?", "e
 # How to Improve
 Switch the default model to `auto` so lightweight questions are routed cheaply. Reserve premium models for tasks that need actual reasoning: planning, debugging, multi-step refactors. Custom-instruct your IDE to "use the cheapest model that can answer this" for short prompts.
 
+# How to Improve (Claude Code)
+Claude Code has no automatic model router: switch to Sonnet or Haiku with `/model` for quick lookups, and keep Opus or Fable for planning, debugging and multi-step refactors.
+
 # Examples
 {{normalizeModel(modelId)}}: "{{messageText | truncate:60}}"
 

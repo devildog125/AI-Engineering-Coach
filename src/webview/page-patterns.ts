@@ -487,7 +487,7 @@ function renderExploreDetail(container: HTMLElement, wsId: string, wsName: strin
       </div>
       ${proj.topFiles.length > 0 ? html`
       <div class="explore-section">
-        <h4>Busiest Copilot Files</h4>
+        <h4>Busiest AI-Edited Files</h4>
         <ol class="explore-file-list">
           ${proj.topFiles.map(f => html`<li><code>${f}</code></li>`)}
         </ol>

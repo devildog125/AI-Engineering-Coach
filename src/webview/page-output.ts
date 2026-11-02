@@ -6,9 +6,9 @@
 /* Output page renderer -- merges Production & Consumption into a single tabbed view */
 
 import { DateFilter } from '../core/types';
-import { TOKEN_DATA_AVAILABLE_FROM, FF_TOKEN_REPORTING_ENABLED } from '../core/constants';
+import { TOKEN_DATA_AVAILABLE_FROM, FF_TOKEN_USAGE_ENABLED } from '../core/constants';
 import { isoWeek } from '../core/helpers';
-import { rpc, createChart, formatNum, $$, PALETTE, COLORS, HARNESS_COLORS } from './shared';
+import { rpc, createChart, formatNum, formatMoney, $$, PALETTE, COLORS, HARNESS_COLORS } from './shared';
 import { html, render, StatCard, CanvasEl, ComponentChildren } from './render';
 
 type AggLevel = 'daily' | 'weekly' | 'monthly';
@@ -70,6 +70,10 @@ interface ProdData {
   dailyRemovedByHarness: Record<string, number[]>;
 }
 
+/** How the Cost figures are computed, per harness. Shown under the Token Usage stat cards so
+ *  nobody reads a Claude API-price equivalent as a subscription bill, or a Copilot estimate as verified. */
+const COST_BASIS_NOTE = html`<p class="credits-note"><strong>Cost basis:</strong> Claude Code is priced per API call at Anthropic list price (cache TTLs, fast mode and region included), plus background calls from Claude Code's own cost report. It matches Claude Code's cost tracking, but it is an API-price equivalent, not a Pro/Max subscription bill. Copilot figures use GitHub's published per-token rates and are not verified against GitHub billing.</p>`;
+
 interface AiCreditRpcData {
   totalCredits: number;
   totalInputTokens: number;
@@ -82,6 +86,8 @@ interface AiCreditRpcData {
   pendingRequests: number;
   noDataRequests: number;
   finalizableRequests: number;
+  /** Requests with tokens but no known list price (cost excluded, not guessed). */
+  unpricedRequests: number;
   missingPct: number;
   avgCreditsPerRequest: number;
   avgCreditsPerDay: number;
@@ -92,6 +98,7 @@ interface AiCreditRpcData {
     uncachedInputTokens: number; inputTokens: number; outputTokens: number;
     cacheReadTokens: number; cacheWriteTokens: number;
     credits: number; missingPct: number;
+    unpricedRequests: number;
     harnesses: string[];
   }>;
   daily: { labels: string[]; credits: number[]; cumulative: number[]; byModel: Record<string, number[]> };
@@ -118,7 +125,7 @@ let activeRangeDays = 0;
 let activeTab: OutputTab = 'production';
 
 export async function renderOutput(container: HTMLElement, currentFilter: DateFilter): Promise<void> {
-  if (!FF_TOKEN_REPORTING_ENABLED && activeTab === 'token-usage') {
+  if (!FF_TOKEN_USAGE_ENABLED && activeTab === 'token-usage') {
     activeTab = 'production';
   }
 
@@ -238,7 +245,7 @@ export async function renderOutput(container: HTMLElement, currentFilter: DateFi
     <div class="cons-range-bar" id="outputRange"></div>
     <div class="tab-bar" id="output-tabs">
       <button class=${`tab${activeTab === 'production' ? ' active' : ''}`} data-tab="production">Code Output</button>
-      ${FF_TOKEN_REPORTING_ENABLED ? html`<button class=${`tab${activeTab === 'token-usage' ? ' active' : ''}`} data-tab="token-usage">Token Usage</button>` : ''}
+      ${FF_TOKEN_USAGE_ENABLED ? html`<button class=${`tab${activeTab === 'token-usage' ? ' active' : ''}`} data-tab="token-usage">Token Usage</button>` : ''}
     </div>
     <div id="output-tab-content"></div>
   `, container);
@@ -258,7 +265,7 @@ export async function renderOutput(container: HTMLElement, currentFilter: DateFi
     const chartTitle = level === 'weekly' ? 'Weekly AI Code Output' : level === 'monthly' ? 'Monthly AI Code Output' : 'Daily AI Code Output';
     const yLabel = level === 'weekly' ? 'LoC/week' : level === 'monthly' ? 'LoC/month' : 'LoC/day';
     const cadence = level === 'weekly' ? 'week' : level === 'monthly' ? 'month' : 'day';
-    const outputInfo = html`<span class="info-icon" tabindex="0" role="button" aria-label="AI code output info">${'\u24d8'}<span class="info-popup">Counts the net new lines of code the AI assistant actually wrote, aggregated per ${cadence}. Each edit is compared against the previous version of the file, so only added lines are counted ${'\u2014'} re-saving an unchanged file or rewriting the same lines is not double-counted. Taller bars mean more AI-authored code in that period; hover a bar to see the exact line count, and use the tabs below to split output by model, workspace, or harness.</span></span>`;
+    const outputInfo = html`<span class="info-icon" tabindex="0" role="button" aria-label="AI code output info">${'\u24d8'}<span class="info-popup">Counts the net new lines of code the AI assistant actually wrote, aggregated per ${cadence}. Edits that record the previous file version (Copilot edits, Claude Code Edit) count only the added lines, so rewriting the same lines is not double-counted; a whole-file write (Claude Code Write) counts every line it wrote. Taller bars mean more AI-authored code in that period; hover a bar to see the exact line count, and use the tabs below to split output by model, workspace, or harness.</span></span>`;
     const netInfo = html`<span class="info-icon" tabindex="0" role="button" aria-label="Net AI code output info">${'\u24d8'}<span class="info-popup">Net AI LoC is lines the AI added minus lines the AI removed, aggregated per ${cadence}. A ${cadence} where the assistant deleted or rewrote more than it added shows a bar below zero. This reflects the lasting footprint of AI edits on your files, not just gross output.</span></span>`;
     const netTitle = level === 'weekly' ? 'Weekly Net AI Code Output' : level === 'monthly' ? 'Monthly Net AI Code Output' : 'Daily Net AI Code Output';
 
@@ -644,7 +651,7 @@ export async function renderOutput(container: HTMLElement, currentFilter: DateFi
     const hiddenModelCount = modelEntries.length - visibleModelEntries.length;
     const anyCached = visibleModelEntries.some(([, info]) => (info.cacheReadTokens + info.cacheWriteTokens) > 0);
     render(html`
-      <table class="data-table"><thead><tr><th>Model</th><th>Source</th><th>Requests</th><th>Input Tokens</th>${anyCached && html`<th title="Cached input tokens (read + write).">Cached</th>`}<th>Output Tokens</th><th>Data</th></tr></thead><tbody>
+      <table class="data-table"><thead><tr><th>Model</th><th>Source</th><th>Requests</th><th>Input Tokens</th>${anyCached && html`<th title="Cached input tokens (read + write).">Cached</th>`}<th>Output Tokens</th><th title="List-price cost in USD (1 credit = $0.01).">Cost</th><th>Data</th></tr></thead><tbody>
         ${visibleModelEntries.map(([model, info]) => {
           const dataTag = info.finalizableRequests === 0 && info.requests > 0
             ? html`<span class="missing-badge-inline" title="No finalizable requests for this model \u2014 all are pending or from a source that doesn't record tokens.">N/A</span>`
@@ -659,6 +666,7 @@ export async function renderOutput(container: HTMLElement, currentFilter: DateFi
             <td>${formatNum(info.inputTokens)}</td>
             ${anyCached && html`<td>${cachedTotal > 0 ? formatNum(cachedTotal) : html`<span class="missing-badge-inline">\u2014</span>`}</td>`}
             <td>${formatNum(info.outputTokens)}</td>
+            <td>${formatMoney(info.credits / 100)}${info.unpricedRequests > 0 && html` <span class="pending-badge" title=${formatNum(info.unpricedRequests) + ' requests used a model with no known list price — their cost is left out, not guessed.'}>+${formatNum(info.unpricedRequests)} unknown</span>`}</td>
             <td>${dataTag}${info.partialRequests > 0 && html` <span class="pending-badge" title=${formatNum(info.partialRequests) + ' output-only requests (input not captured) \u2014 output tokens shown but credits cannot be billed.'}>+${formatNum(info.partialRequests)} partial</span>`}${info.pendingRequests > 0 && html` <span class="pending-badge" title=${formatNum(info.pendingRequests) + ' requests in active/aborted sessions (excluded from missing %)'}>+${formatNum(info.pendingRequests)} pending</span>`}${info.noDataRequests > 0 && html` <span class="pending-badge" title=${formatNum(info.noDataRequests) + " requests where the harness/source did not record token data (excluded from missing %)"}>+${formatNum(info.noDataRequests)} no-data</span>`}</td>
           </tr>`;
         })}
@@ -750,8 +758,10 @@ export async function renderOutput(container: HTMLElement, currentFilter: DateFi
         <${StatCard} label="Total Tokens" value=${formatNum(totalTokens)} accent="var(--accent-blue)" />
         <${StatCard} label="Input Tokens" value=${formatNum(data.totalInputTokens)} accent="var(--accent-green)" />
         <${StatCard} label="Output Tokens" value=${formatNum(data.totalOutputTokens)} accent="var(--accent-purple)" />
+        <${StatCard} label="Cost (list price)" value=${formatMoney(data.totalCredits / 100)} accent="var(--accent-orange)" />
       </div>
-      <p class="credits-note">Totals reflect ${formatNum(data.countedRequests)} of ${formatNum(data.finalizableRequests)} finalizable requests with token data. Code completions are free and not counted. ${missingLabel}${partialLabel}${pendingLabel}${noDataLabel}</p>
+      ${COST_BASIS_NOTE}${data.unpricedRequests > 0 && html`<p class="credits-note">${formatNum(data.unpricedRequests)} request(s) used a model with no known list price; their cost is left out, not guessed.</p>`}
+      <p class="credits-note">Totals reflect ${formatNum(data.countedRequests)} of ${formatNum(data.finalizableRequests)} finalizable requests with token data. Inline code completions are not counted. ${missingLabel}${partialLabel}${pendingLabel}${noDataLabel}</p>
       <div class="chart-tabs" style="margin-top:18px">
         <button class="chart-tab active" data-chart-tab="tokens">Token Consumption</button>
         <button class="chart-tab" data-chart-tab="tokens-ws">Tokens by Workspace</button>
@@ -787,11 +797,11 @@ export async function renderOutput(container: HTMLElement, currentFilter: DateFi
 
 
   async function renderActiveTab(): Promise<void> {
-    if (!FF_TOKEN_REPORTING_ENABLED && activeTab === 'token-usage') {
+    if (!FF_TOKEN_USAGE_ENABLED && activeTab === 'token-usage') {
       activeTab = 'production';
     }
     if (activeTab === 'production') await renderProductionTab();
-    else if (!FF_TOKEN_REPORTING_ENABLED) renderTokenUsageGated();
+    else if (!FF_TOKEN_USAGE_ENABLED) renderTokenUsageGated();
     else await renderTokenUsageTab();
   }
 
@@ -868,7 +878,7 @@ export async function renderOutput(container: HTMLElement, currentFilter: DateFi
       btn.classList.add('active');
       const tab = btn.dataset.tab;
       if (!tab) return;
-      if (!FF_TOKEN_REPORTING_ENABLED && tab === 'token-usage') return;
+      if (!FF_TOKEN_USAGE_ENABLED && tab === 'token-usage') return;
       activeTab = tab as OutputTab;
       snapActiveRangeIfDisabled();
       refreshRangeBar();

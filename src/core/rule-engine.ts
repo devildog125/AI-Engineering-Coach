@@ -14,7 +14,7 @@
  */
 
 import { DetectionRule, DetectorEmission, RulePreviewStats, RuleEvalResult, RuleTemplateVars, AntiPattern, PracticeGroup, Session, SessionRequest  } from './types';
-import { parseRule, fillTemplate, serializeRule } from './rule-parser';
+import { parseRule, fillTemplate, serializeRule, suggestionTemplateFor } from './rule-parser';
 import { warnCore } from './log';
 
 /* ---- Multi-layer rule storage ---- */
@@ -244,8 +244,9 @@ export function evaluateRule(
   const description = rule.descriptionTemplate
     ? fillTemplate(rule.descriptionTemplate, vars as unknown as Record<string, unknown>)
     : `${emission.count} occurrences`;
-  const suggestion = rule.suggestionTemplate
-    ? fillTemplate(rule.suggestionTemplate, vars as unknown as Record<string, unknown>)
+  const suggestionTemplate = suggestionTemplateFor(rule, emission.harnesses); // Harness-fitting advice.
+  const suggestion = suggestionTemplate
+    ? fillTemplate(suggestionTemplate, vars as unknown as Record<string, unknown>)
     : '';
 
   return {

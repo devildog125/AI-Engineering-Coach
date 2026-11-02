@@ -7,14 +7,14 @@
 
 import { DateFilter, ConfigHealthData, WorkspaceConfigHealth, ConfigFileInfo, ContextProvisionScore, HookCoverageInfo, AgenticReadinessScore, ContextReviewResult, ContextReviewFinding } from '../core/types';
 import { TOKEN_DATA_AVAILABLE_FROM } from '../core/constants';
-import { rpc, COLORS, Chart, trackChart, destroyCharts } from './shared';
+import { rpc, COLORS, Chart, trackChart, destroyCharts, harnessColor } from './shared';
 import { html, render, StatCard, ComponentChildren } from './render';
 import { renderContextManagement } from './page-context-mgmt';
 import { llmAvailable, llmUnavailableNote } from './capabilities';
 
-/* Harness colors */
-const HC: Record<string, string> = { 'Local Agent': '#007acc', 'Local Agent (Insiders)': '#24bfa5', 'Xcode': '#147efb', 'Claude Code': '#d97706', 'GitHub Copilot CLI': '#8b5cf6', 'GitHub Copilot App': '#a371f7', 'Codex CLI': '#ec4899', 'OpenCode': '#10b981' };
-function hc(h: string): string { return HC[h] || COLORS.muted; }
+/** Harness color for Context Health, shared with the dashboard.
+ *  The old local map keyed 'Claude Code' / 'Codex CLI', which sessions never use, so Claude rendered grey. */
+function hc(h: string): string { return harnessColor(h, 0); }
 
 /** Active treemap chart reference + workspace data for review highlighting */
 let activeTreemapChart: Chart | null = null;
@@ -61,6 +61,7 @@ export async function renderConfigHealth(container: HTMLElement, currentFilter: 
     return d.toISOString().slice(0, 10);
   }
   function isRangeDisabledByCutoff(days: number): boolean {
+    if (currentFilter.harness === 'Claude') return false; // Claude Code logs always carry per-request tokens; the cutoff is a Copilot-log limit.
     return rangeStartDate(days) < TOKEN_DATA_AVAILABLE_FROM;
   }
 
@@ -146,7 +147,7 @@ export async function renderConfigHealth(container: HTMLElement, currentFilter: 
     `padding:8px 18px;font-size:13px;font-weight:${active ? '600' : '500'};cursor:pointer;border:none;background:transparent;color:${active ? 'var(--text-primary, #c9d1d9)' : 'var(--text-muted, #8b949e)'};border-bottom:2px solid ${active ? COLORS.blue : 'transparent'};transition:color 0.15s,border-color 0.15s;`;
 
   const cur = activeRangeDays[activeSubTab];
-  const cutoffTitle = `Sessions before ${TOKEN_DATA_AVAILABLE_FROM} did not capture per-request token data, so this range can't show meaningful context analytics. It will become available again once enough recent data falls within the range.`;
+  const cutoffTitle = `Copilot sessions before ${TOKEN_DATA_AVAILABLE_FROM} did not capture per-request token data, so this range can't show meaningful context analytics. Filter to Claude to see its full history, or wait until enough recent data falls within the range.`;
   const rangeButtons = visibleRanges.length > 0
     ? visibleRanges.map(r => {
         const disabled = isRangeDisabledByCutoff(r.days);

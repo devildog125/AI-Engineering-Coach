@@ -7,8 +7,8 @@ import { AntiPattern, OccurrenceDetail, PracticeGroup, Session, SessionRequest }
 import type { DetectionRule, DetectorEmission, RuleTemplateVars } from './types';
 import { getAllRules } from './rule-engine';
 import { registerAllBuiltinRules, loadPersonalRules, registerAllBuiltinMetrics } from './rule-loader';
-import { fillTemplate } from './rule-parser';
-import { parsePipeline, executePipeline, checkPipelineTrigger, resolveInheritance } from './rule-pipeline';
+import { fillTemplate, suggestionTemplateFor } from './rule-parser';
+import { parsePipeline, executePipeline, checkPipelineTrigger, resolveInheritance, isIdeHarness } from './rule-pipeline';
 import { isoWeek } from './helpers';
 
 registerAllBuiltinRules();
@@ -157,8 +157,9 @@ function emissionToAntiPattern(
   const description = rule.descriptionTemplate
     ? fillTemplate(rule.descriptionTemplate, vars as unknown as Record<string, unknown>)
     : `${rule.name}: ${emission.count} occurrences`;
-  const suggestion = rule.suggestionTemplate
-    ? fillTemplate(rule.suggestionTemplate, vars as unknown as Record<string, unknown>)
+  const suggestionTemplate = suggestionTemplateFor(rule, emission.harnesses); // Harness-fitting advice.
+  const suggestion = suggestionTemplate
+    ? fillTemplate(suggestionTemplate, vars as unknown as Record<string, unknown>)
     : '';
 
   const details: OccurrenceDetail[] = [];
@@ -181,6 +182,7 @@ function emissionToAntiPattern(
     examples: emission.examples,
     details,
     weeklyHist: buildWeeklyHist(weekCounts),
+    harnesses: emission.harnesses?.slice().sort(), // Sorted so the badge order is stable between renders.
   };
 }
 
@@ -265,6 +267,15 @@ export function invalidateDetectorRegistry(): void {
   _registry = null;
 }
 
+/** Whether a harness filter should skip IDE-context rules entirely.
+ *  @param harness the dashboard's harness filter, if any
+ *  @returns true for a non-IDE harness that no IDE rule opts into via `harnesses:`
+ *  Exists so filtering to Claude still runs the IDE rules that now apply to Claude. */
+export function shouldSkipIdeDetectors(harness: string | undefined): boolean {
+  if (!harness || isIdeHarness(harness)) return false;             // All harnesses, or an IDE harness: run them.
+  return !getAllRules().some(rule => rule.requiresIdeContext && rule.harnesses?.includes(harness));
+}
+
 export function getActiveDetectors(skipIdeDetectors: boolean): DetectorDefinition[] {
   const registry = buildRegistry();
   return registry.filter(detector => !skipIdeDetectors || !detector.requiresIdeContext);
@@ -291,7 +302,11 @@ export function runEmitters(reqs: SessionRequest[], sessions: Session[], skipIde
   return results;
 }
 
-export function getDetectorGroupCounts(skipIdeDetectors: boolean): Record<PracticeGroup, number> {
+/** Number of rules per practice group: the denominator of each group's score.
+ *  @param skipIdeDetectors drop every IDE-context rule
+ *  @param harness the harness filter; for a non-IDE harness, IDE rules count only if they opt into it
+ *  Exists so a Claude-only view is scored against rules that can actually fire for Claude. */
+export function getDetectorGroupCounts(skipIdeDetectors: boolean, harness?: string): Record<PracticeGroup, number> {
   const counts: Record<PracticeGroup, number> = {
     'prompt-quality': 0,
     'session-hygiene': 0,
@@ -299,7 +314,10 @@ export function getDetectorGroupCounts(skipIdeDetectors: boolean): Record<Practi
     'tool-mastery': 0,
     'context-management': 0,
   };
+  const nonIdeHarness = harness !== undefined && !isIdeHarness(harness); // e.g. Claude, Codex.
   for (const detector of getActiveDetectors(skipIdeDetectors)) {
+    // IDE rules that can't see this harness's requests would only dilute the score.
+    if (nonIdeHarness && detector.requiresIdeContext && !detector.rule?.harnesses?.includes(harness)) continue;
     counts[detector.group] += 1;
   }
   return counts;

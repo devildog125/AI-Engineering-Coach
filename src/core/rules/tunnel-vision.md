@@ -21,6 +21,9 @@ Detects when the vast majority of requests are concentrated in a single workspac
 # How to Improve
 Try using Copilot in other workspaces too. It can help with documentation, testing, DevOps, and exploratory coding across your entire workflow.
 
+# How to Improve (Claude Code)
+Try Claude Code in other repositories too. It can help with documentation, testing, DevOps and exploratory coding across your whole workflow.
+
 # Examples
 {{extra.workspace}}: {{extra.reqCount}} requests ({{extra.reqPct}}%)
 

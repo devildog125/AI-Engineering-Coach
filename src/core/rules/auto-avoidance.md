@@ -20,6 +20,9 @@ Detects users who pin a single premium model for every request and never let aut
 # How to Improve
 Switch the default to "auto" or use the model picker. Reserve specific top-tier models (Claude Opus, GPT-5) for hard reasoning, planning, or large-context tasks. For routine edits and questions, the lighter model auto picks is usually enough.
 
+# How to Improve (Claude Code)
+Claude Code has no auto model, so pick one per task with `/model`: Sonnet for routine edits and questions, Opus or Fable for hard reasoning and large-context work.
+
 # Examples
 {{extra.topModel}}: {{extra.topCount}} requests ({{pct}})
 
