@@ -48,6 +48,13 @@ describe('resolveWorkspaceRoot', () => {
     const root = makeTempDir();
     expect(resolveWorkspaceRoot('codex-proj-1234', { id: 'codex-proj-1234', name: 'proj', path: root })).toBe(root);
   });
+
+  // Claude workspaces carry the project cwd as their path; it used to be read as a .jsonl log folder and dropped.
+  it('uses an existing Claude workspace cwd as the root path', () => {
+    const root = makeTempDir();
+    expect(resolveWorkspaceRoot('claude-proj-1234', { id: 'claude-proj-1234', name: 'proj', path: root })).toBe(root);
+    expect(resolveWorkspaceRoot('claude-gone', { id: 'claude-gone', name: 'gone', path: path.join(root, 'missing') })).toBeNull();
+  });
 });
 
 describe('scanConfigFiles', () => {
@@ -106,6 +113,29 @@ Explain the following code.
     writeFile(root, 'CLAUDE.md', '# Claude\n\nFollow conventions.');
     const files = scanConfigFiles(root);
     expect(files.some(f => f.kind === 'claude-md' && f.relativePath === 'CLAUDE.md')).toBe(true);
+  });
+
+  // Claude Code reads CLAUDE.md from .claude/ and from package directories, and scoped rules from .claude/rules/.
+  it('detects .claude/CLAUDE.md, nested CLAUDE.md and .claude/rules, but not vendored copies', () => {
+    const root = makeTempDir();
+    writeFile(root, '.claude/CLAUDE.md', '# Claude\n\nFollow conventions.');
+    writeFile(root, 'packages/api/CLAUDE.md', '# API\n\nUse the repo pattern.');
+    writeFile(root, '.claude/rules/testing.md', '# Testing\n\nUse vitest.');
+    writeFile(root, 'node_modules/dep/CLAUDE.md', '# Not ours');
+    const files = scanConfigFiles(root);
+    const paths = files.map(f => `${f.kind}:${f.relativePath}`);
+    expect(paths).toContain('claude-md:.claude/CLAUDE.md');
+    expect(paths).toContain('claude-md:packages/api/CLAUDE.md');
+    expect(paths).toContain('instruction:.claude/rules/testing.md');
+    expect(paths.some(p => p.includes('node_modules'))).toBe(false); // Vendored config is someone else's.
+  });
+
+  it('applies the lean-CLAUDE.md rule to a nested CLAUDE.md', () => {
+    const root = makeTempDir();
+    writeFile(root, 'packages/api/CLAUDE.md', '# API\n' + 'rule\n'.repeat(400));
+    const nested = scanConfigFiles(root).find(f => f.relativePath === 'packages/api/CLAUDE.md');
+    expect(nested?.sizeVerdict).toBe('oversized');
+    expect(nested?.markdownIssues.join(' ')).toContain('@path');     // Claude imports are @path, not @import.
   });
 
   it('detects scoped instructions in .github/instructions/', () => {
@@ -327,5 +357,28 @@ describe('readSnippet', () => {
     writeFile(root, 'big.txt', 'x'.repeat(1000));
     const snippet = readSnippet(root, ['big.txt'], 50);
     expect(snippet.length).toBe(50);
+  });
+});
+
+describe('generateWorkspaceSuggestions for Claude Code workspaces', () => {
+  it('suggests CLAUDE.md and .claude/commands instead of Copilot files', () => {
+    const suggestions = generateWorkspaceSuggestions([], null, true).join('\n');
+    expect(suggestions).toContain('CLAUDE.md');
+    expect(suggestions).toContain('.claude/commands');
+    expect(suggestions).not.toContain('copilot-instructions.md');   // Copilot file is irrelevant to Claude Code.
+    expect(suggestions).not.toContain('.prompt.md');
+  });
+
+  it('points an oversized instruction file at .claude/rules, not .github/instructions', () => {
+    const files: ConfigFileInfo[] = [
+      { relativePath: 'AGENTS.md', kind: 'instruction', lines: 600, chars: 6000, isMarkdown: true, markdownIssues: [], sizeVerdict: 'oversized', lastModified: null },
+    ];
+    const text = generateWorkspaceSuggestions(files, null, true).join('\n');
+    expect(text).toContain('.claude/rules');
+    expect(text).not.toContain('.github/instructions');
+  });
+
+  it('keeps Copilot suggestions for other workspaces', () => {
+    expect(generateWorkspaceSuggestions([], null, false).join('\n')).toContain('copilot-instructions.md');
   });
 });

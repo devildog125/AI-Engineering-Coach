@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See LICENSE in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-/* Learning Center -- AI-personalized quizzes, code review games, and resources based on your Copilot usage */
+/* Learning Center -- AI-personalized quizzes, code review games, and resources based on your AI coding usage */
 
 import { DateFilter } from '../core/types';
 import { rpc, COLORS } from './shared';
@@ -165,7 +165,7 @@ function buildLearningMarkup(
   const accuracy = totalAttempts > 0 ? Math.round((state.solved / totalAttempts) * 100) : 0;
   return html`
     <div class="learn-page">
-      <div class="learn-hero"><div class="learn-hero-left"><div class="learn-hero-icon">${SVG.graduationCap}</div><div><h2 class="learn-hero-title">Learning Center</h2><p class="learn-hero-sub">Your AI-personalized upskilling program, built from your actual Copilot usage. The skill tree adapts to your languages, dependencies, and projects -- so everything you learn is directly applicable to your work. Explore freely, but pass quizzes to level up.</p></div></div></div>
+      <div class="learn-hero"><div class="learn-hero-left"><div class="learn-hero-icon">${SVG.graduationCap}</div><div><h2 class="learn-hero-title">Learning Center</h2><p class="learn-hero-sub">Your AI-personalized upskilling program, built from your actual AI coding usage. The skill tree adapts to your languages, dependencies, and projects -- so everything you learn is directly applicable to your work. Explore freely, but pass quizzes to level up.</p></div></div></div>
       <div class="learn-stats">
         <div class="learn-stat"><div class="learn-stat-val" style="color:${COLORS.green}">${state.solved}</div><div class="learn-stat-lbl">Correct</div></div>
         <div class="learn-stat"><div class="learn-stat-val" style="color:${COLORS.red}">${state.failed}</div><div class="learn-stat-lbl">Incorrect</div></div>

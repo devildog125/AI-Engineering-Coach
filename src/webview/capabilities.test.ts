@@ -41,7 +41,7 @@ describe('webview capabilities', () => {
     expect(mocks.rpc).toHaveBeenCalledWith('getCapabilities');
     expect(caps.llmAvailable()).toBe(false);
     expect(aiControlsHidden()).toBe(true);
-    expect(caps.llmUnavailableNote()).toBe('Sign in to GitHub Copilot in VS Code to use this.');
+    expect(caps.llmUnavailableNote()).toBe('Sign in to a VS Code language model provider (such as GitHub Copilot) to use this.');
   });
 
   it('keeps AI controls visible when Copilot is available', async () => {

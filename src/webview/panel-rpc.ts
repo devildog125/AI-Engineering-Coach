@@ -8,7 +8,7 @@
 import { Analyzer } from '../core/analyzer';
 import { ParseResult } from '../core/parser';
 import { loadSessionFromDisk } from '../core/cache';
-import { FF_TOKEN_REPORTING_ENABLED } from '../core/constants';
+import { FF_TOKEN_REPORTING_ENABLED, FF_TOKEN_USAGE_ENABLED } from '../core/constants';
 import { loadGitHubAppMetrics } from '../core/github-app-analytics';
 import { loadGitHubAppIssueCredits } from '../core/github-app-issue-credits';
 import { loadSessionImages } from '../core/session-image-loader';
@@ -23,7 +23,7 @@ import {
   getRule,
   evaluateRule,
 } from '../core/rule-engine';
-import { runDetectors, runEmitters } from '../core/detector-registry';
+import { runDetectors, runEmitters, shouldSkipIdeDetectors } from '../core/detector-registry';
 import { parsePipeline, executePipeline, checkPipelineTrigger, resolveInheritance } from '../core/rule-pipeline';
 import { parseRule, serializeRule } from '../core/rule-parser';
 import { getRuleLayerInfo, getPersonalRulesDir, getProjectRulesDir } from '../core/rule-loader';
@@ -52,6 +52,14 @@ import type { EditLocIndex } from '../core/edit-loc-diff';
  * (field scope) as truthy session values.
  */
 type DslRow = Record<string, unknown>;
+/** True when a Data Explorer value carries information: not null, '', 0, and not an empty array or object. */
+function isFilled(v: unknown): boolean {
+  if (v == null || v === '' || v === 0) return false;           // Scalars the explorer already treated as empty.
+  if (Array.isArray(v)) return v.length > 0;                   // [] means "no tools used", not a filled field.
+  if (typeof v === 'object') return Object.keys(v).length > 0; // {} likewise (variableKinds, compaction).
+  return true;
+}
+
 function pickRows(scope: string, reqs: SessionRequest[], sessions: Session[]): DslRow[] {
   const isSessionScope = scope === 'sessions' || scope === 'session';
   return (isSessionScope ? sessions : reqs) as unknown as DslRow[];
@@ -730,12 +738,12 @@ const rpcHandlers: TypedRpcHandlers = {
     validateBurndownConfig(params?.config),
     isRecord(params?.filter) ? validateDateFilter(params.filter) : undefined,
   ) : errorResult('Token reporting is temporarily disabled'),
-  getAiCredits: (a, _p, params) => FF_TOKEN_REPORTING_ENABLED ? a.getAiCredits(validateDateFilter(params)) : errorResult('Token reporting is temporarily disabled'),
+  getAiCredits: (a, _p, params) => FF_TOKEN_USAGE_ENABLED ? a.getAiCredits(validateDateFilter(params)) : errorResult('Token reporting is temporarily disabled'),
   getAiCreditBurndown: (a, _p, params) => FF_TOKEN_REPORTING_ENABLED ? a.getAiCreditBurndown(
     validateBurndownConfig(params?.config),
     isRecord(params?.filter) ? validateDateFilter(params.filter) : undefined,
   ) : errorResult('Token reporting is temporarily disabled'),
-  getTokenCoverage: (a, _p, params) => FF_TOKEN_REPORTING_ENABLED ? a.getTokenCoverage(validateDateFilter(params)) : errorResult('Token reporting is temporarily disabled'),
+  getTokenCoverage: (a, _p, params) => FF_TOKEN_USAGE_ENABLED ? a.getTokenCoverage(validateDateFilter(params)) : errorResult('Token reporting is temporarily disabled'),
   getDayTimeline: (a, _p, params) => a.getDayTimeline(
     isOptionalString(params?.date) ? params.date : undefined,
     isOptionalString(params?.mode) ? params.mode : undefined,
@@ -810,7 +818,7 @@ const rpcHandlers: TypedRpcHandlers = {
     const filter = validateDateFilter(params);
     const reqs = a.filterRequests(filter);
     const sessions = a.filterSessions(filter);
-    const skipIde = !!(filter?.harness && !filter.harness.startsWith('Local Agent') && filter.harness !== 'Xcode');
+    const skipIde = shouldSkipIdeDetectors(filter?.harness);       // Same gate as the Anti-Patterns page.
     const detectorResults = runDetectors(reqs, sessions, skipIde);
     const emissions = runEmitters(reqs, sessions, skipIde);
     const previews = getRulePreviewStats(reqs, sessions, skipIde, detectorResults, emissions);
@@ -883,7 +891,7 @@ const rpcHandlers: TypedRpcHandlers = {
     const filter = validateDateFilter(params);
     const reqs = a.filterRequests(filter);
     const sessions = a.filterSessions(filter);
-    const skipIde = !!(filter?.harness && !filter.harness.startsWith('Local Agent') && filter.harness !== 'Xcode');
+    const skipIde = shouldSkipIdeDetectors(filter?.harness);       // Same gate as the Anti-Patterns page.
     const detectorResults = runDetectors(reqs, sessions, skipIde);
     const emissions = runEmitters(reqs, sessions, skipIde);
     const previews = getRulePreviewStats(reqs, sessions, skipIde, detectorResults, emissions);
@@ -1038,7 +1046,7 @@ Explain why this session triggered the rule.`;
       const filter = isRecord(params?.filter) ? validateDateFilter(params.filter) : undefined;
       const reqs = a.filterRequests(filter);
       const sessions = a.filterSessions(filter);
-      const skipIde = !!(filter?.harness && !filter.harness.startsWith('Local Agent') && filter.harness !== 'Xcode');
+      const skipIde = shouldSkipIdeDetectors(filter?.harness);       // Same gate as the Anti-Patterns page.
 
       // Enrich requests with session info (needed by rules that reference workspaceName/sessionId)
       const sessionMap = new Map<string, { sessionId: string; workspaceName: string }>();
@@ -1248,7 +1256,7 @@ Explain why this session triggered the rule.`;
     const fieldSummaries = FIELD_SCHEMA.map(field => {
       const rows = pickRows(field.scope, reqs, sessions);
 
-      const values = rows.map(r => r[field.name]).filter(v => v != null && v !== '' && v !== 0);
+      const values = rows.map(r => r[field.name]).filter(isFilled);
       const nonEmpty = values.length;
       const total = rows.length;
       const fillRate = total > 0 ? Math.round((nonEmpty / total) * 100) : 0;

@@ -341,9 +341,10 @@ describe('harness-aware image loading', () => {
     ]);
     const results = parseClaudeSessions(path.dirname(project), undefined, sources);
     const sessions = results.flatMap(result => result.sessions);
-    expect(sessions.find(session => session.sessionId === 'claude-session')?.requests).toHaveLength(2);
+    // The subagent's prompt was written by Claude, so its work folds into the parent turn instead of adding a request.
+    expect(sessions.find(session => session.sessionId === 'claude-session')?.requests).toHaveLength(1);
     expect(sources.get('claude-session')?.additionalFilePaths).toHaveLength(1);
-    for (const [sessionId, requestId] of [['claude-session', 'claude-image'], ['claude-session', 'child-image'], ['orphan', 'orphan-image']]) {
+    for (const [sessionId, requestId] of [['claude-session', 'claude-image'], ['orphan', 'orphan-image']]) {
       const source = sources.get(sessionId)!;
       vi.mocked(createRequest).mockClear();
       expect(extractSourceImages(source, sessionId, requestId)).toEqual([image]);

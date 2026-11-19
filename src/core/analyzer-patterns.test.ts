@@ -7,7 +7,7 @@ import { describe, it, expect } from 'vitest';
 import { PatternsAnalyzer } from './analyzer-patterns';
 import { Session, SessionRequest } from './types/session-types';
 import type { PatternContribution } from './types/analytics-types';
-import { getDetectorGroupCounts } from './detector-registry';
+import { getDetectorGroupCounts, shouldSkipIdeDetectors } from './detector-registry';
 import { isoWeek } from './helpers';
 
 function makeRequest(overrides: Partial<SessionRequest> = {}): SessionRequest {
@@ -88,7 +88,8 @@ describe('PatternsAnalyzer', () => {
       weekly: [{ week, group: 'code-review', severity: 'high', occurrences: 4 }],
     };
     const result = analyzer.getAntiPatterns(filter, contribution);
-    const counts = getDetectorGroupCounts(!!filter?.harness);
+    // Same gate the analyzer uses: a Claude filter keeps the IDE rules that opt into Claude.
+    const counts = getDetectorGroupCounts(shouldSkipIdeDetectors(filter?.harness), filter?.harness);
     const previous = baseline.groupScores.find(row => row.group === 'code-review')!;
     const patterns = result.patterns.filter(row => row.group === 'code-review');
     const penalty = patterns.reduce((sum, row) => sum + ({ high: 12, medium: 7, low: 3 })[row.severity], 0);

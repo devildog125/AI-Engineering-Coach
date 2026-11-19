@@ -21,6 +21,9 @@ Detects outlier requests that attach a very large number of files to the prompt.
 # How to Improve
 Be selective: attach only the 3–5 files most relevant to the task. Use `#codebase` or `#file:<glob>` patterns to let the model search on demand. For exploration tasks, ask the agent to `grep` first and read results into context only as needed.
 
+# How to Improve (Claude Code)
+Mention only the 3–5 files that matter with `@path`. Let Claude find the rest with Grep and Glob, and hand broad exploration to an Explore subagent so its reads stay out of your main context.
+
 # Examples
 {{length(referencedFiles)}} files: "{{messageText | truncate:60}}"
 

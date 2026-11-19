@@ -137,6 +137,31 @@ describe('WorkflowAnalyzer', () => {
       expect(result.estimatedTimeSavedMins).toBeGreaterThan(0);
     });
 
+    // A prompt already served by a command or skill, or a harness-internal turn, is not a skill opportunity.
+    it.each([
+      ['a slash command', { slashCommand: '/review' }],
+      ['a skill', { skillsUsed: ['code-review'] }],
+      ['an excluded Claude turn', { curiosity: { kind: 'excluded' as const, excerpts: [] } }],
+    ])('skips prompts that already go through %s', (_label, extra) => {
+      const now = Date.now();
+      const repeatedPrompt = 'please refactor the authentication module to use dependency injection';
+      const sessions = Array.from({ length: 5 }, (_, i) =>
+        makeSession({ sessionId: `s${i}`, requests: [makeRequest({ messageText: repeatedPrompt, timestamp: now + i * 1000, ...extra })] }),
+      );
+      expect(createAnalyzer(sessions).getWorkflowOptimization().clusters).toEqual([]);
+    });
+
+    it('honours the harness filter', () => {
+      const now = Date.now();
+      const repeatedPrompt = 'please refactor the authentication module to use dependency injection';
+      const sessions = Array.from({ length: 6 }, (_, i) =>
+        makeSession({ sessionId: `s${i}`, harness: i % 2 ? 'Claude' : 'Local Agent', requests: [makeRequest({ messageText: repeatedPrompt, timestamp: now + i * 1000 })] }),
+      );
+      const clusters = createAnalyzer(sessions).getWorkflowOptimization({ harness: 'Claude' }).clusters;
+      expect(clusters.length).toBeGreaterThanOrEqual(1);
+      expect(clusters.every(c => c.harnesses.length === 1 && c.harnesses[0] === 'Claude')).toBe(true); // Only Claude rows were judged.
+    });
+
     it('builds skill drafts for clusters', () => {
       const now = Date.now();
       const repeatedPrompt = 'generate unit tests for the user service module with jest and mocking';

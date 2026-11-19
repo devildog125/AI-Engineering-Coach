@@ -5,6 +5,7 @@ group: tool-mastery
 severity: low
 scope: requests
 requiresIdeContext: true
+harnesses: [Claude]
 version: 1
 tags: [tools, slash, commands]
 thresholds:
@@ -20,6 +21,9 @@ Only {{extra.withSlash}} of {{total}} requests use slash commands. Slash command
 
 # How to Improve
 Try /fix for bugs, /explain for understanding code, /tests for test generation, /doc for documentation.
+
+# How to Improve (Claude Code)
+Try `/init` (CLAUDE.md), `/review`, `/compact`, `/context` and `/model`. Save prompts you repeat as custom commands or skills in `.claude/commands/` or `.claude/skills/`.
 
 # Examples
 /fix - Fix bugs in selected code

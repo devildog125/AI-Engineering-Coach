@@ -100,7 +100,8 @@ export class ConfigAnalyzer extends AnalyzerBase {
     if (!rootPath) return f?.workspaceId ? { kind: 'unresolved' } : null;
 
     const isClaudeWorkspace = wsId.startsWith('claude-');
-    const harness = activity?.harness || (isClaudeWorkspace ? 'Claude Code' : 'Local Agent');
+    // 'Claude' is the harness value the Claude parser emits; 'Claude Code' never matched the harness filter.
+    const harness = activity?.harness || (isClaudeWorkspace ? 'Claude' : 'Local Agent');
     if (f?.harness && harness !== f.harness) return null;
     return { kind: 'resolved', rootPath, isClaudeWorkspace, harness };
   }
@@ -203,6 +204,10 @@ export class ConfigAnalyzer extends AnalyzerBase {
         if (workspace.harness !== prev.harness) {
           prev.harness = prev.harness + ', ' + workspace.harness;
         }
+        // A VS Code entry and a claude-* entry share one root: keep both harnesses' advice, not just the first's.
+        prev.suggestions = [...new Set([...prev.suggestions, ...workspace.suggestions])]; // Strings, so Set dedupes.
+        prev.hookCoverage ??= workspace.hookCoverage;                // Only the Claude entry analyzes hooks.
+        prev.hasHooks ||= workspace.hasHooks;
         continue;
       }
       seenRoots.set(workspace.rootPath, deduped.length);
@@ -212,16 +217,21 @@ export class ConfigAnalyzer extends AnalyzerBase {
     return deduped;
   }
 
-  private computeWorkspaceActivity(_f?: DateFilter): Map<string, { sessionCount: number; requestCount: number; lastTimestamp: number | null; lastDate: string | null; harness: string }> {
+  private computeWorkspaceActivity(f?: DateFilter): Map<string, { sessionCount: number; requestCount: number; lastTimestamp: number | null; lastDate: string | null; harness: string }> {
     const map = new Map<string, { sessionCount: number; requestCount: number; lastTimestamp: number | null; lastDate: string | null; harness: string }>();
+    const harnessCounts = new Map<string, Map<string, number>>(); // workspace → harness → sessions, to pick the dominant one.
 
-    for (const s of this.sessions) {
+    for (const s of this.filteredSessions(f)) {                     // Honour the dashboard's date/harness/workspace filter.
       const wsId = s.workspaceId;
       let entry = map.get(wsId);
       if (!entry) {
         entry = { sessionCount: 0, requestCount: 0, lastTimestamp: null, lastDate: null, harness: s.harness };
         map.set(wsId, entry);
+        harnessCounts.set(wsId, new Map());
       }
+      const counts = harnessCounts.get(wsId)!;
+      counts.set(s.harness, (counts.get(s.harness) ?? 0) + 1);
+      if (counts.get(s.harness)! > (counts.get(entry.harness) ?? 0)) entry.harness = s.harness; // Most sessions wins, not first seen.
       entry.sessionCount++;
       entry.requestCount += s.requestCount;
       const ts = s.lastMessageDate || s.creationDate;
@@ -317,7 +327,10 @@ export class ConfigAnalyzer extends AnalyzerBase {
           group: 'tool-mastery',
           occurrences: score.totalRequests,
           description: `${harness}: ${score.totalRequests} requests with context score ${score.score}/100. Only ${fileRefPct}% include file references, ${instrPct}% use custom instructions.`,
-          suggestion: `In ${harness}, reference files with #file, add .instructions.md files, and use skills/prompts to provide richer context.`,
+          // Claude Code's equivalents of #file / .instructions.md / prompts are @path, CLAUDE.md and commands.
+          suggestion: harness === 'Claude'
+            ? 'In Claude Code, mention files with @path, keep project conventions in CLAUDE.md, and use skills, commands or subagents to provide richer context.'
+            : `In ${harness}, reference files with #file, add .instructions.md files, and use skills/prompts to provide richer context.`,
           examples: [],
           details: provDetails,
           weeklyHist: { labels: [], counts: [] },
@@ -500,7 +513,7 @@ export class ConfigAnalyzer extends AnalyzerBase {
       const mcpPaths = [
         path.join(ws.rootPath, '.vscode', 'mcp.json'),
         path.join(ws.rootPath, 'mcp.json'),
-        path.join(ws.rootPath, '.claude', 'mcp_servers.json'),
+        path.join(ws.rootPath, '.mcp.json'),                       // Claude Code's project MCP config (was a non-existent .claude/mcp_servers.json).
         path.join(ws.rootPath, '.cursor', 'mcp.json'),
       ];
       if (mcpPaths.some(p => safeFileExists(p))) {

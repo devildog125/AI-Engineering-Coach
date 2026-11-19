@@ -25,6 +25,9 @@ Detects workspaces that produce almost no markdown output, suggesting specs, pla
 # How to Improve
 Adopt spec-driven development: ask Copilot to draft a spec, plan, or design doc before writing code. Even a short markdown outline dramatically improves code quality and reduces iteration cycles. Try starting sessions with "Write a brief spec for..." or "Draft an implementation plan for...".
 
+# How to Improve (Claude Code)
+Start bigger tasks in plan mode (Shift+Tab) so Claude writes a plan you approve before any code, or ask it to draft a short spec file first.
+
 # Examples
 {{extra.workspace}}: {{extra.codeLoc}} code LoC, {{extra.mdLoc}} markdown LoC ({{extra.ratioPct}}%)
 

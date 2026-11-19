@@ -123,7 +123,7 @@ describe('Packaged VSIX without GitHub Copilot', () => {
     await dashboard.expectHidden('.occ-explain-btn');
     await dashboard.click('#sidebar [data-page="config-health"]');
     await dashboard.expectHidden('#ctxReviewBtn');
-    await dashboard.expectDisabled('button.llm-fallback', 'Sign in to GitHub Copilot in VS Code to use this.');
+    await dashboard.expectDisabled('button.llm-fallback', 'Sign in to a VS Code language model provider (such as GitHub Copilot) to use this.');
     await dashboard.expectHealthy();
     await dashboard.snapshot('08-copilot-unavailable',
       'Copilot unavailable: Why?, Skill Finder and Level Up hidden, Review Context Files disabled with a sign-in hint');

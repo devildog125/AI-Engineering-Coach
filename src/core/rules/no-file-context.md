@@ -5,6 +5,7 @@ group: prompt-quality
 severity: medium
 scope: requests
 requiresIdeContext: true
+harnesses: [Claude]
 version: 1
 tags: [prompt, context, files]
 thresholds:
@@ -20,6 +21,9 @@ Detects requests that have no file references, meaning Copilot cannot see the re
 
 # How to Improve
 Use #file to reference relevant files, or open files in the editor so Copilot can use them as context.
+
+# How to Improve (Claude Code)
+Mention relevant files with `@path/to/file` (Tab completes paths) so Claude starts from the right code instead of searching for it.
 
 # Examples
 "{{message}}..."

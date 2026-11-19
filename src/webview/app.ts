@@ -436,7 +436,7 @@ document.addEventListener('click', (e) => {
 
 export function navigateTo(page: string): void {
   page = normalizePageForFeatureFlags(page);
-  if (!llmAvailable() && (page === 'skills' || page === 'level-up')) page = 'dashboard';
+  if (!llmAvailable() && page === 'skills') page = 'dashboard';   // Level Up is data-driven; only its Learning tab needs a model.
   currentPage = page;
   document.body.classList.toggle('github-app-view', isGitHubAppPage(page));
   for (const a of $$<HTMLAnchorElement>('.nav-links a')) a.classList.toggle('active', a.dataset.page === page);

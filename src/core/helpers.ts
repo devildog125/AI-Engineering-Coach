@@ -172,6 +172,8 @@ export function normalizeModel(modelId: string): string {
   // Non-global replace: only the first digit-hyphen-digit is converted,
   // preserving suffixes like -1m.
   if (m.startsWith('claude-')) {
+    // Claude Code tags long-context variants as `claude-opus-5-5[1m]`; same model, same price.
+    m = m.replace(/\[[^\]]*\]$/, '');
     m = m.replace(/-\d{8}$/, '');
     m = m.replace(/(\d)-(\d)/, '$1.$2');
   }
@@ -246,6 +248,15 @@ export function canonicalizeReasoningEffort(
 }
 
 /* ---- Native token resolution ---- */
+
+/** Context-window fill of one request: tokens the model saw on its last call.
+ *  @param r a request (only its token fields are read)
+ *  @returns `contextTokens` when the harness records it separately (Claude, whose
+ *  `promptTokens` sums every call in the turn), else `promptTokens` (Copilot's is already last-call)
+ *  Exists so context-window analysis never treats a multi-call total as one prompt. */
+export function contextSize(r: { promptTokens: number | null; contextTokens?: number | null }): number | null {
+  return r.contextTokens !== undefined ? r.contextTokens : r.promptTokens; // null stays null: no data.
+}
 
 /**
  * Resolve token counts for a request.

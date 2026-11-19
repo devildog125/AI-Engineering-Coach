@@ -6,12 +6,12 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { fileUriToPath } from '../core/helpers';
 import { Analyzer } from '../core/analyzer';
 import { ParseResult } from '../core/parser';
 import { readFileSafe } from '../core/parser-shared';
-import { Workspace } from '../core/types';
 import { spotlight } from '../core/spotlight';
+import { resolveWorkspaceRoot, scanConfigFiles } from '../core/config-health-helpers';
+import { mcpServerFromTool } from '../core/curiosity-activity';
 import { exportSummaryFiles } from '../summary-export-vscode';
 import {
   callLlm,
@@ -25,8 +25,9 @@ import {
   SCHEMA_RESOURCES,
   SCHEMA_TRIAGE,
 } from './panel-llm';
-import { getCatalogItems } from './panel-catalog';
+import { ANTHROPIC_RAW_BASE, getAnthropicSkillFiles, getCatalogItems, installedClaudeSkillNames } from './panel-catalog';
 import { readTextWithByteLimit } from './fetch-utils';
+import { parseFrontmatterList, splitSkillMarkdown, toClaudeAgentMarkdown, toClaudeRuleMarkdown, toClaudeSkillMarkdown, toSkillName, unmappedCopilotTools, withOriginalFrontmatter } from './skill-convert';
 import { validateDateFilter } from './panel-rpc';
 import { isNumber, isOptionalString, isRecord, isString, postError, postEvent, postResponse, RequestMessage, safeJoinUnder } from './panel-shared';
 
@@ -40,6 +41,7 @@ type CustomPanelMethodName =
   | 'exportSummary'
   | 'installSkill'
   | 'installCatalogItem'
+  | 'convertCatalogSkill'
   | 'triageSkills'
   | 'discoverCatalog'
   | 'triageCatalog'
@@ -82,6 +84,64 @@ async function readCappedText(response: Response): Promise<string> {
   return readTextWithByteLimit(response, CATALOG_MAX_BYTES, 'Catalog item too large');
 }
 
+/** Fetch one awesome-copilot catalog file, refusing any URL outside that repo.
+ *  @param catalogPath repo-relative path from the catalog (already checked for `..` and absolute paths)
+ *  Exists because install and Claude conversion both download the same files. */
+async function fetchAwesomeCopilotFile(catalogPath: string): Promise<string> {
+  const parsedUrl = new URL(`https://raw.githubusercontent.com/github/awesome-copilot/main/${catalogPath}`);
+  if (parsedUrl.hostname !== 'raw.githubusercontent.com' || !parsedUrl.pathname.startsWith('/github/awesome-copilot/')) {
+    throw new Error('Invalid catalog URL');                        // Path tricks must not leave the repo.
+  }
+  const response = await fetch(parsedUrl.toString(), { redirect: 'error' });
+  if (!response.ok) throw new Error(`Failed to fetch: ${response.status}`);
+  return readCappedText(response);
+}
+
+/** True for catalog paths that are safe to request: relative, no parent segments. */
+function isSafeCatalogPath(catalogPath: string): boolean {
+  return !!catalogPath && !catalogPath.includes('..') && !catalogPath.startsWith('/') && !catalogPath.startsWith('\\');
+}
+
+/** Kinds of awesome-copilot item that can be converted for Claude Code. */
+type ClaudeConvertKind = 'skill' | 'agent' | 'instruction';
+
+/** Where each converted kind lives in Claude Code, under ~/.claude. */
+const CLAUDE_KIND_DIRS: Record<ClaudeConvertKind, string> = {
+  skill: 'skills',                                                 // ~/.claude/skills/<name>/SKILL.md
+  agent: 'agents',                                                 // ~/.claude/agents/<name>.md (subagent)
+  instruction: 'rules',                                            // ~/.claude/rules/<name>.md (path-scoped rule)
+};
+
+/** Read a convertible kind from untrusted params, defaulting to skill. */
+function toConvertKind(value: unknown): ClaudeConvertKind {
+  return value === 'agent' || value === 'instruction' ? value : 'skill';
+}
+
+/** Personal skills folder Skill Finder installs into: ~/.claude/skills.
+ *  Claude Code reads it, and VS Code's Copilot agent sessions also read it, so one install serves both.
+ *  @returns the folder path, or undefined when the home directory is unknown */
+function personalSkillsDir(): string | undefined {
+  const homeDir = process.env.HOME || process.env.USERPROFILE;
+  return homeDir ? path.join(homeDir, '.claude', 'skills') : undefined;
+}
+
+// Limits for installing a whole Anthropic skill folder (largest today: 96 files, 5.6 MB).
+const SKILL_INSTALL_MAX_FILES = 200;
+const SKILL_INSTALL_MAX_FILE_BYTES = 10 * 1024 * 1024;
+const SKILL_INSTALL_MAX_TOTAL_BYTES = 30 * 1024 * 1024;
+
+/** Download one binary-safe file with a size cap.
+ *  Exists because skill folders include scripts and assets, not just markdown text. */
+async function fetchBytesCapped(url: string, maxBytes: number): Promise<Uint8Array> {
+  const response = await fetch(url, { redirect: 'error' });
+  if (!response.ok) throw new Error(`Failed to fetch ${url}: HTTP ${response.status}`);
+  const declared = Number(response.headers.get('content-length'));
+  if (Number.isFinite(declared) && declared > maxBytes) throw new Error('Skill file too large'); // Refuse before reading.
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  if (bytes.byteLength > maxBytes) throw new Error('Skill file too large');                     // No/false length header.
+  return bytes;
+}
+
 function getStringArray(value: unknown, limit: number): string[] {
   return Array.isArray(value) ? value.filter(isString).slice(0, limit) : [];
 }
@@ -119,6 +179,7 @@ export class PanelRequestService {
     exportSummary: this.handleExportSummary.bind(this),
     installSkill: this.handleInstallSkill.bind(this),
     installCatalogItem: this.handleInstallCatalogItem.bind(this),
+    convertCatalogSkill: this.handleConvertCatalogSkill.bind(this),
     triageSkills: this.handleTriageSkills.bind(this),
     discoverCatalog: this.handleDiscoverCatalog.bind(this),
     triageCatalog: this.handleTriageCatalog.bind(this),
@@ -321,11 +382,11 @@ Generate 3 ${context.difficulty} interview-style questions tailored to this deve
     const examples = Array.isArray(params.examples) ? (params.examples as string[]).slice(0, 5) : [];
     const skillDraft = isString(params.skillDraft) ? params.skillDraft : '';
 
-    const systemPrompt = `You are an expert at writing SKILL.md files for VS Code GitHub Copilot.
-A skill file is a markdown instruction file that teaches Copilot how to handle a specific repeated workflow pattern.
+    const systemPrompt = `You are an expert at writing Agent Skills (SKILL.md files) for AI coding agents such as Claude Code and GitHub Copilot.
+A skill is a markdown instruction file that teaches the agent how to handle a specific repeated workflow pattern. The agent loads it when the description matches the task.
 
 Generate a professional, production-ready SKILL.md file. Include:
-1. YAML frontmatter with: name, description, and an applyTo glob pattern
+1. YAML frontmatter with exactly two fields: name (lowercase, hyphens) and description (what the skill does AND when to use it, in one or two sentences)
 2. A clear "## When to Use" section
 3. Detailed "## Steps" with numbered instructions the AI should follow
 4. A "## Guidelines" section with quality criteria
@@ -622,12 +683,20 @@ ${UNTRUSTED_DATA_GUARD}`;
       return;
     }
 
+    const kind = toConvertKind(params.kind);
     const homeDir = process.env.HOME || process.env.USERPROFILE;
     if (!homeDir) {
       postError(this.webview, msg.id, 'Cannot determine home directory');
       return;
     }
-    const targetPath = safeJoinUnder(path.join(homeDir, '.agents', 'skills'), filename.split('/'), { allowedExts: ['.md'] });
+    // Skills are folders (<name>/SKILL.md); agents and rules are single files (<name>.md).
+    const segments = filename.split('/');
+    if (kind === 'skill' ? segments.length !== 2 || segments[1] !== 'SKILL.md' : segments.length !== 1) {
+      postError(this.webview, msg.id, 'Invalid filename');
+      return;
+    }
+    const baseDir = path.join(homeDir, '.claude', CLAUDE_KIND_DIRS[kind]); // skills / agents / rules.
+    const targetPath = safeJoinUnder(baseDir, segments, { allowedExts: ['.md'] });
     if (!targetPath) {
       postError(this.webview, msg.id, 'Invalid filename');
       return;
@@ -648,35 +717,164 @@ ${UNTRUSTED_DATA_GUARD}`;
     const catalogPath = isString(params.path) ? params.path : '';
     const kind = isString(params.kind) ? params.kind : 'skill';
     const title = isString(params.title) ? params.title : '';
-    if (!catalogPath || catalogPath.includes('..') || catalogPath.startsWith('/') || catalogPath.startsWith('\\')) {
+    if (!isSafeCatalogPath(catalogPath)) {
       postError(this.webview, msg.id, 'Invalid catalog path');
+      return;
+    }
+    if (params.source === 'anthropic') {
+      await this.installAnthropicSkill(msg, catalogPath);          // Whole folder: SKILL.md plus scripts and assets.
       return;
     }
 
     try {
-      const rawUrl = `https://raw.githubusercontent.com/github/awesome-copilot/main/${catalogPath}`;
-      const parsedUrl = new URL(rawUrl);
-      if (parsedUrl.hostname !== 'raw.githubusercontent.com' || !parsedUrl.pathname.startsWith('/github/awesome-copilot/')) {
-        postError(this.webview, msg.id, 'Invalid catalog URL');
-        return;
-      }
-      const response = await fetch(parsedUrl.toString(), { redirect: 'error' });
-      if (!response.ok) throw new Error(`Failed to fetch: ${response.status}`);
-      const content = await readCappedText(response);
+      const content = await fetchAwesomeCopilotFile(catalogPath);
 
       const homeDir = process.env.HOME || process.env.USERPROFILE;
       if (!homeDir) throw new Error('Cannot determine home directory');
-      const subDir = kind === 'agent' ? 'agents' : 'skills';
       const slug = title.toLowerCase().replaceAll(/[^a-z0-9]+/g, '-').replaceAll(/-+/g, '-').replaceAll(/^-|-$/g, '');
       const filename = catalogPath.split('/').pop() || `${slug}.md`;
+      // Skills install unconverted to ~/.agents/skills when the user picks "agents" (Codex, VS Code
+      // Copilot); otherwise ~/.claude/skills. Claude-converted skills go through convertCatalogSkill.
+      const skillsBase = params.target === 'agents' ? path.join(homeDir, '.agents', 'skills') : path.join(homeDir, '.claude', 'skills');
+      // As-is copies: agents → ~/.agents/agents, instructions → ~/.agents/instructions, skills per target.
+      const baseDir = kind === 'agent' ? path.join(homeDir, '.agents', 'agents')
+        : kind === 'instruction' ? path.join(homeDir, '.agents', 'instructions')
+          : skillsBase;
 
-      const targetPath = safeJoinUnder(path.join(homeDir, '.agents', subDir), [slug, filename], { allowedExts: ['.md'] });
+      const targetPath = safeJoinUnder(baseDir, [slug, filename], { allowedExts: ['.md'] });
       if (!targetPath) throw new Error('Invalid path');
 
       const targetUri = vscode.Uri.file(targetPath);
       await vscode.workspace.fs.createDirectory(vscode.Uri.file(path.dirname(targetPath)));
       await vscode.workspace.fs.writeFile(targetUri, Buffer.from(content, 'utf8'));
       postResponse(this.webview, msg.id, { content, filename: `${slug}/${filename}` });
+    } catch (error: unknown) {
+      postError(this.webview, msg.id, error instanceof Error ? error.message : 'Install failed');
+    }
+  }
+
+  /** Convert an awesome-copilot skill, agent or instruction for Claude Code and return it for preview.
+   *  @param msg params: path (catalog file), kind, title and description (frontmatter fallbacks)
+   *  Responds with { content, filename, note }; nothing is written until the user saves it.
+   *  Exists because Copilot skills reference Copilot-only features (#file, Copilot tool names,
+   *  applyTo) that Claude Code doesn't understand. */
+  private async handleConvertCatalogSkill(msg: RequestMessage): Promise<void> {
+    const params = (msg.params ?? {}) as Record<string, unknown>;
+    const catalogPath = isString(params.path) ? params.path : '';
+    const title = isString(params.title) ? params.title : '';
+    const description = isString(params.description) ? params.description : '';
+    const kind = toConvertKind(params.kind);
+    if (!isSafeCatalogPath(catalogPath)) {
+      postError(this.webview, msg.id, 'Invalid catalog path');
+      return;
+    }
+    try {
+      const original = await fetchAwesomeCopilotFile(catalogPath);
+      // Identity: a skill's folder name, or an agent/instruction file name without its Copilot suffix.
+      const fileName = catalogPath.split('/').at(-1) ?? '';
+      const rawName = kind === 'skill' ? catalogPath.split('/').at(-2) ?? '' : fileName.replace(/\.(agent|instructions|chatmode)?\.?md$/i, '');
+      const name = toSkillName(rawName) || toSkillName(title) || `converted-${kind}`;
+      let body = original;
+      let note = 'Converted to Claude Code: Copilot references rewritten and frontmatter fixed.';
+      try {
+        body = await this.rewriteSkillForClaude(original, kind);   // Body: Copilot features → Claude Code equivalents.
+      } catch {
+        note = 'AI rewrite unavailable: only the frontmatter was converted. Check the body for Copilot-only references.';
+      }
+      // Frontmatter comes from the original file and is rebuilt in code, so tools / model / applyTo survive.
+      const merged = withOriginalFrontmatter(original, body);
+      const content = kind === 'agent' ? toClaudeAgentMarkdown(merged, name, description)
+        : kind === 'instruction' ? toClaudeRuleMarkdown(merged)
+          : toClaudeSkillMarkdown(merged, name, description);
+      const filename = kind === 'skill' ? `${name}/SKILL.md` : `${name}.md`;
+      if (kind === 'agent') {
+        // Name the Copilot tools the subagent won't have, so the user can add MCP servers or edit tools.
+        const dropped = unmappedCopilotTools(parseFrontmatterList(splitSkillMarkdown(original).fields.tools ?? ''));
+        if (dropped.length > 0) note += ` Copilot tools with no Claude Code equivalent were left out: ${dropped.join(', ')}.`;
+      }
+      if (kind === 'instruction' && !content.startsWith('---')) {
+        note += ' This rule has no file scope, so Claude Code loads it in every session.'; // Context cost warning.
+      }
+      postResponse(this.webview, msg.id, { content, filename, note, kind, destination: `~/.claude/${CLAUDE_KIND_DIRS[kind]}/` });
+    } catch (error: unknown) {
+      postError(this.webview, msg.id, error instanceof Error ? error.message : 'Conversion failed');
+    }
+  }
+
+  /** Ask the language model to adapt a Copilot skill's instructions to Claude Code.
+   *  @returns the rewritten SKILL.md text (frontmatter is normalized afterwards by the caller) */
+  private async rewriteSkillForClaude(original: string, kind: ClaudeConvertKind = 'skill'): Promise<string> {
+    // Same rewrite rules for every kind; only the source and target file types differ.
+    const what = {
+      skill: 'GitHub Copilot skills (SKILL.md files) into Claude Code skills',
+      agent: 'GitHub Copilot custom agents (.agent.md files) into Claude Code subagents, whose body is the subagent system prompt',
+      instruction: 'GitHub Copilot instruction files (.instructions.md) into Claude Code rules (~/.claude/rules)',
+    }[kind];
+    const systemPrompt = `You convert ${what}.
+
+Rewrite ONLY what is Copilot-specific. Keep every instruction, step, example and code block otherwise unchanged.
+- "#file:<path>" or "#<path>" file references → "@<path>"
+- "#codebase", "@workspace" → tell Claude to search the codebase with Grep and Glob
+- Copilot tool names → Claude Code tools: runCommands/runInTerminal/terminal → Bash; editFiles/createFile → Edit/Write; readFile → Read; search/codebase/findFiles → Grep/Glob; fetch/fetchWebpage → WebFetch; manage_todo_list → TaskCreate/TaskUpdate
+- "Copilot Chat", "agent mode", "the chat panel" → Claude Code, when they refer to the assistant running the skill
+- .github/copilot-instructions.md → CLAUDE.md; .github/prompts → .claude/commands; .github/skills → .claude/skills
+- Keep the frontmatter exactly as it is: it is converted separately.
+Do NOT change text where GitHub Copilot is the subject matter (for example a skill about configuring Copilot itself).
+
+Respond with ONLY the full converted file, nothing else.
+
+${UNTRUSTED_DATA_GUARD}`;
+    const text = await callLlm([
+      vscode.LanguageModelChatMessage.User(systemPrompt),
+      // Labelled block instead of spotlight(): the rewrite must keep line breaks and code blocks intact.
+      vscode.LanguageModelChatMessage.User(`Convert this skill. The untrusted skill file is between the labels:\n<<<UNTRUSTED_SKILL_FILE\n${original}\nUNTRUSTED_SKILL_FILE>>>`),
+    ]);
+    let content = text.trim();
+    if (content.startsWith('```')) {
+      content = content.replace(/^```(?:markdown|md)?\n?/, '').replace(/\n?```$/, ''); // Strip a fenced reply.
+    }
+    // A rewrite that drops most of the skill is worse than none: fall back to frontmatter-only conversion.
+    if (content.length < original.length * 0.5) throw new Error('Conversion lost content');
+    return content;
+  }
+
+  /** Install one Anthropic skill folder into ~/.claude/skills/<name>/.
+   *  @param catalogPath `skills/<name>/SKILL.md` from the catalog item
+   *  Exists because Anthropic skills ship scripts and assets beside SKILL.md; copying only
+   *  the markdown would leave them broken. Every URL and target path is checked first. */
+  private async installAnthropicSkill(msg: RequestMessage, catalogPath: string): Promise<void> {
+    try {
+      const name = /^skills\/([A-Za-z0-9._-]+)\/SKILL\.md$/.exec(catalogPath)?.[1];
+      if (!name) throw new Error('Invalid Anthropic skill path');
+      // File list comes from the catalog listing; refuse anything the catalog didn't list.
+      await getCatalogItems();                                     // Fills the file list if the catalog cache was cleared.
+      const files = getAnthropicSkillFiles(name);
+      if (!files?.length) throw new Error('Skill not found in the Anthropic catalog');
+      if (files.length > SKILL_INSTALL_MAX_FILES) throw new Error('Skill has too many files');
+      const skillsDir = personalSkillsDir();
+      if (!skillsDir) throw new Error('Cannot determine home directory');
+
+      // Download everything first so a failure never leaves a half-installed skill.
+      const downloads: { target: string; bytes: Uint8Array }[] = [];
+      let totalBytes = 0;
+      for (const repoPath of files) {
+        const url = new URL(`${ANTHROPIC_RAW_BASE}${repoPath}`);
+        if (url.hostname !== 'raw.githubusercontent.com' || !url.pathname.startsWith(`/anthropics/skills/main/skills/${name}/`)) {
+          throw new Error('Invalid skill file URL');               // Only this skill's own folder.
+        }
+        const relative = repoPath.slice(`skills/${name}/`.length).split('/'); // Path inside the skill folder.
+        const target = safeJoinUnder(skillsDir, [name, ...relative]);
+        if (!target) throw new Error(`Invalid skill file path: ${repoPath}`);
+        const bytes = await fetchBytesCapped(url.toString(), SKILL_INSTALL_MAX_FILE_BYTES);
+        totalBytes += bytes.byteLength;
+        if (totalBytes > SKILL_INSTALL_MAX_TOTAL_BYTES) throw new Error('Skill is too large to install');
+        downloads.push({ target, bytes });
+      }
+      for (const { target, bytes } of downloads) {
+        await vscode.workspace.fs.createDirectory(vscode.Uri.file(path.dirname(target)));
+        await vscode.workspace.fs.writeFile(vscode.Uri.file(target), bytes);
+      }
+      postResponse(this.webview, msg.id, { content: '', filename: `${name}/ (${downloads.length} files)` });
     } catch (error: unknown) {
       postError(this.webview, msg.id, error instanceof Error ? error.message : 'Install failed');
     }
@@ -758,8 +956,11 @@ Here are the top ${clusterSummaries.length} groups of similar prompts this devel
 
   private async handleDiscoverCatalog(msg: RequestMessage): Promise<void> {
     try {
+      const installed = installedClaudeSkillNames();               // Personal + plugin Claude Code skills.
       const items = (await getCatalogItems()).map(item => ({
         ...item,
+        // A skill is installed when its folder name (skills/<name>/SKILL.md) is already present.
+        installed: item.kind === 'skill' && installed.has((item.path.split('/').at(-2) ?? '').toLowerCase()),
         relevanceScore: 0,
         matchReasons: [],
       }));
@@ -780,6 +981,7 @@ Here are the top ${clusterSummaries.length} groups of similar prompts this devel
         title: toText(entry.title),
         description: toText(entry.description).slice(0, 120),
         category: toText(entry.category),
+        source: toText(entry.source) || 'awesome-copilot',         // Tells the model which tool the item is for.
       };
     });
 
@@ -797,7 +999,9 @@ Here are the top ${clusterSummaries.length} groups of similar prompts this devel
     const context = this.getUserContext();
     const workspace = isOptionalString(params.workspace) ? params.workspace : undefined;
 
-    const systemPrompt = `You are an expert at recommending GitHub Copilot customization files (skills, agents, instructions, hooks) for developers.
+    const systemPrompt = `You are an expert at recommending AI coding agent customization files (skills, agents, instructions, hooks) for developers who use Claude Code, GitHub Copilot, or both.
+
+Items with source "anthropic" are official Claude Code skills. Skills from either source work in Claude Code and in VS Code Copilot. Agents and instructions from "awesome-copilot" are converted to Claude Code subagents and rules on install, so recommend them for any harness. Hooks from "awesome-copilot" only work in GitHub Copilot: recommend those only if the developer's harnesses include a Copilot harness.
 
 You will receive:
 1. The developer's context: languages, harnesses, topics, and which workspace they are currently analyzing
@@ -846,6 +1050,10 @@ ${JSON.stringify(candidates)}`;
           category: toText(raw?.category),
           path: toText(raw?.path),
           url: toText(raw?.url),
+          source: raw?.source === 'anthropic' ? 'anthropic' as const : 'awesome-copilot' as const,
+          license: toText(raw?.license) || undefined,
+          proprietary: raw?.proprietary === true,
+          installed: raw?.installed === true,
           relevanceScore: 100,
           matchReasons: [pick.reason],
         };
@@ -1046,44 +1254,12 @@ ${contextSection}`;
     return { languages, harnesses, topics, workspaces };
   }
 
-  private resolveWorkspaceRoot(workspace: Workspace): string | null {
-    const wsJson = path.join(workspace.path, 'workspace.json');
-    try {
-      const data = readJsonRecord(wsJson);
-      if (data) {
-        const raw = isString(data.folder) ? data.folder : isString(data.workspace) ? data.workspace : '';
-        const decoded = fileUriToPath(raw).replace(/\/+$/, '');
-        if (decoded && fs.existsSync(decoded)) return decoded;
-      }
-    } catch {
-      // Ignore and fall through.
-    }
-
-    const wsYaml = path.join(workspace.path, 'workspace.yaml');
-    try {
-      const yamlText = fs.readFileSync(wsYaml, 'utf-8');
-      const folderMatch = yamlText.match(/folder:\s*['"]?([^'"\n]+)/);
-      if (folderMatch) {
-        const decoded = fileUriToPath(folderMatch[1]).replace(/\/+$/, '');
-        if (fs.existsSync(decoded)) return decoded;
-      }
-    } catch {
-      // Ignore and fall through.
-    }
-
-    if (fs.existsSync(path.join(workspace.path, 'package.json'))) {
-      return workspace.path;
-    }
-
-    return null;
-  }
-
   private resolveWorkspaceRoots(): Array<{ workspaceId: string; workspaceName: string; rootPath: string }> {
     if (!this.parseResult) return [];
 
     const roots: Array<{ workspaceId: string; workspaceName: string; rootPath: string }> = [];
     for (const [, workspace] of this.parseResult.workspaces) {
-      const rootPath = this.resolveWorkspaceRoot(workspace);
+      const rootPath = resolveWorkspaceRoot(workspace.id, workspace); // Shared resolver: knows Claude/Codex cwd workspaces.
       if (rootPath) {
         roots.push({ workspaceId: workspace.id, workspaceName: workspace.name, rootPath });
       }
@@ -1119,20 +1295,13 @@ ${contextSection}`;
     }
   }
 
+  /** Context files the repo gives its AI assistants: the Context Health scanner's list (CLAUDE.md, AGENTS.md,
+   *  .claude/*, .mcp.json, .github/copilot-instructions.md, .github/agents) plus Copilot's setup-steps workflow. */
   private getRepoContextFiles(rootPath: string): string[] {
-    const contextFiles = this.readDirectoryEntries(
-      path.join(rootPath, '.github', 'agents'),
-      entry => entry.endsWith('.yml') || entry.endsWith('.yaml') || entry.endsWith('.md'),
-      entry => `agents/${entry}`,
-    );
-
+    const contextFiles = scanConfigFiles(rootPath).map(f => f.relativePath); // One scanner for every harness.
     if (this.hasFile(path.join(rootPath, '.github', 'copilot-setup-steps.yml'))) {
-      contextFiles.push('copilot-setup-steps.yml');
+      contextFiles.push('.github/copilot-setup-steps.yml');       // Not markdown, so the scanner does not list it.
     }
-    if (this.hasFile(path.join(rootPath, '.github', 'copilot-instructions.md'))) {
-      contextFiles.push('copilot-instructions.md');
-    }
-
     return contextFiles;
   }
 
@@ -1292,10 +1461,8 @@ ${contextSection}`;
     for (const session of filteredSessions) {
       for (const request of session.requests) {
         for (const tool of request.toolsUsed) {
-          if (!tool.startsWith('mcp_')) continue;
-          const rest = tool.slice(4);
-          const underscoreIdx = rest.indexOf('_');
-          const serverId = underscoreIdx > 0 ? rest.slice(0, underscoreIdx) : rest;
+          const serverId = mcpServerFromTool(tool);                // Copilot mcp_x_y and Claude mcp__x__y.
+          if (!serverId) continue;
           mcpServerCounts.set(serverId, (mcpServerCounts.get(serverId) || 0) + 1);
         }
       }

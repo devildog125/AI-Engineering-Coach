@@ -58,7 +58,7 @@ const FILTER_SCHEMA = {
   fromDate: { type: 'string' as const, description: 'ISO date string (YYYY-MM-DD) for the start of the date range' },
   toDate: { type: 'string' as const, description: 'ISO date string (YYYY-MM-DD) for the end of the date range' },
   workspaceId: { type: 'string' as const, description: 'Filter to a specific workspace by its ID' },
-  harness: { type: 'string' as const, description: 'Filter to a specific AI coding tool (e.g. "VS Code", "Claude", "Copilot CLI")' },
+  harness: { type: 'string' as const, description: 'Filter to a specific AI coding tool (exact name, e.g. "Local Agent", "Claude", "GitHub Copilot CLI")' },
 };
 
 /* ---- tool definitions ---- */

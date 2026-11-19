@@ -9,6 +9,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { Analyzer } from './core/analyzer';
 import { findLogsDirs, parseAllLogsViaWorker } from './core/parser';
+import { hasExternalHarnessSources } from './core/parser-harnesses';
 import { getRuntimeDebugLogPath, installRuntimeDebugHooks, runtimeDebug, setOutputHook } from './core/runtime-debug';
 import { loadAllRuleLayersAsync, loadAllMetricLayersAsync, setDefaultTrustGate, setWorkspaceTrustProvider } from './core/rule-loader';
 import {
@@ -36,7 +37,8 @@ function loadPanelModule(): Promise<PanelModule> {
 
 async function exportSummaryFromLogs(): Promise<void> {
   const dirs = findLogsDirs();
-  if (dirs.length === 0) {
+  // Claude Code, Codex and OpenCode logs are collected by the parser regardless of `dirs` (same rule as the dashboard).
+  if (dirs.length === 0 && !hasExternalHarnessSources()) {
     void vscode.window.showErrorMessage('No AI coding session log directories found.');
     return;
   }

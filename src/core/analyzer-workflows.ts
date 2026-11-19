@@ -125,6 +125,8 @@ export class WorkflowAnalyzer extends AnalyzerBase {
     for (const s of sessions) {
       for (let i = 0; i < s.requests.length; i++) {
         const r = s.requests[i];
+        // Already served by a command or skill, or a harness-internal turn (Claude meta/compact/sidechain): not an opportunity.
+        if (r.slashCommand || r.skillsUsed.length > 0 || r.curiosity?.kind === 'excluded') continue;
         const text = r.messageText.trim();
         if (text.length < MIN_PROMPT_LEN) continue;
         if (isNoise(text)) continue;

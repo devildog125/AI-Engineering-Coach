@@ -46,6 +46,21 @@ describe('panel-rpc', () => {
     expect(handler(analyzer, parseResult, { language: 3 })).toMatchObject({ error: 'Invalid session language filter' });
   });
 
+  it('treats empty arrays and objects as unfilled in Data Explorer fill rates', () => {
+    const sessions = [createSession({
+      sessionId: 's', workspaceId: 'ws', workspaceName: 'Project', harness: 'Claude', requests: [
+        createRequest({ timestamp: Date.parse('2026-09-30T12:00:00Z'), messageText: 'a', responseText: '', toolsUsed: [], variableKinds: {} }),           // Empty: must not count as filled.
+        createRequest({ timestamp: Date.parse('2026-09-30T12:01:00Z'), messageText: 'b', responseText: '', toolsUsed: ['Read'], variableKinds: { file: 1 } }), // Filled.
+      ],
+    })];
+    const analyzer = new Analyzer(sessions, new Map());
+    const parseResult: ParseResult = { sessions, workspaces: new Map(), editLocIndex: new Map(), sessionSourceIndex: new Map() };
+    const result = getRpcHandler('getDataExplorerFields')!(analyzer, parseResult, {}) as { fields: { name: string; fillRate: number }[] };
+    const rate = (name: string) => result.fields.find(f => f.name === name)?.fillRate;
+    expect(rate('toolsUsed')).toBe(50);
+    expect(rate('variableKinds')).toBe(50);
+  });
+
   it('dispatches image requests with the indexed harness source and verifies request ownership', async () => {
     vi.mocked(loadSessionImages).mockReset().mockResolvedValue(['data:image/png;base64,image']);
     const session = createSession({

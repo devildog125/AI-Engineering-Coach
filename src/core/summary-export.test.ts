@@ -18,6 +18,9 @@ const stats: StatsResult = {
   totalSessions: 7,
   totalRequests: 42,
   totalWorkspaces: 3,
+  totalCanceled: 2,
+  uniqueModels: 3,
+  uniqueTools: 5,
 };
 
 const codeProduction: CodeProductionData = {

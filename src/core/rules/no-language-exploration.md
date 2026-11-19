@@ -21,6 +21,9 @@ You've used {{extra.totalLanguages}} languages total, but haven't explored a new
 # How to Improve
 AI coding assistants dramatically lower the barrier to learning new languages. Try asking Copilot to help you build something small in a language you haven't used before. Start with "Write a simple HTTP server in [Go/Rust/Elixir]" to break the ice.
 
+# How to Improve (Claude Code)
+AI coding assistants dramatically lower the barrier to learning new languages. Try asking Claude to build something small in a language you haven't used before, such as "Write a simple HTTP server in Go".
+
 # Examples
 {{extra.languageList}}
 

@@ -5,6 +5,7 @@ group: tool-mastery
 severity: low
 scope: requests
 requiresIdeContext: true
+harnesses: [Claude]
 version: 1
 tags: [tools, skills, domain]
 thresholds:
@@ -19,6 +20,9 @@ No requests use Copilot skills. Skills provide specialized domain knowledge beyo
 
 # How to Improve
 Explore available skills in your IDE. Skills can help with specific frameworks, cloud providers, and development workflows.
+
+# How to Improve (Claude Code)
+Add skills as `.claude/skills/<name>/SKILL.md` (project) or under `~/.claude/skills/` (personal), or install them from a plugin. Claude loads a skill automatically when its description matches the task.
 
 # Examples
 Skills extend Copilot with domain expertise

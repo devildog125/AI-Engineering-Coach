@@ -829,6 +829,17 @@ h2 {
   font-weight: 600;
 }
 
+/* Names the harness a finding was judged from (Claude, Local Agent, ...). */
+.ap-harness-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
 .sev-icon {
   display: inline-flex;
   align-items: center;

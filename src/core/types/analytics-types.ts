@@ -203,6 +203,8 @@ export interface AiCreditModelBreakdown {
   cacheReadTokens: number;
   cacheWriteTokens: number;
   credits: number;
+  /** Requests with token data but no known list price (counted at 0 credits, shown as "unknown cost"). */
+  unpricedRequests: number;
   /** % of *finalizable* requests for this model with no token data (denominator excludes pending + no-data, same as Token Coverage). */
   missingPct: number;
   /** Number of finalizable requests (`requests - pendingRequests - noDataRequests`).
@@ -233,6 +235,8 @@ export interface AiCreditData {
   delegatedRequests: number;
   /** Finalizable requests = `totalRequests - pendingRequests - noDataRequests`. */
   finalizableRequests: number;
+  /** Requests with token data but no known list price; their cost is excluded from totals, not guessed. */
+  unpricedRequests: number;
   /** % of *finalizable* requests with no token data (matches Token Coverage semantics). */
   missingPct: number;
   avgCreditsPerRequest: number;
@@ -577,6 +581,9 @@ export interface AntiPattern {
   weeklyHist: { labels: string[]; counts: number[] };
   /** Aggregate checks use supporting examples, not per-request violations. */
   aggregate?: boolean;
+  /** Harnesses whose rows this rule judged, so the pane can say whose data a finding is about.
+   *  Undefined when the rows' sessions are unknown (rule-test fixtures and previews). */
+  harnesses?: string[];
 }
 
 export interface WeeklyPatternObservation {
@@ -649,6 +656,12 @@ export interface StatsResult {
   totalSessions: number;
   totalWorkspaces: number;
   totalRequests: number;
+  /** Requests cancelled by the user; feeds the "Patient One" cancel-rate achievement. */
+  totalCanceled: number;
+  /** Distinct model ids seen across requests; feeds the "Model Explorer" achievement. */
+  uniqueModels: number;
+  /** Distinct tool names invoked across requests; feeds the "Toolsmith" achievement. */
+  uniqueTools: number;
 }
 
 export interface WorkflowCluster {

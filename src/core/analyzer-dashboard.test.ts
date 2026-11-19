@@ -78,6 +78,20 @@ describe('DashboardAnalyzer', () => {
       expect(stats.totalRequests).toBe(3);
     });
 
+    it('counts cancelled requests and distinct models and tools across sessions', () => {
+      const sessions = [
+        makeSession({ sessionId: 's1', requests: [
+          makeRequest({ isCanceled: true, modelId: 'gpt-4.1', toolsUsed: ['Read', 'Edit'] }),
+          makeRequest({ modelId: 'claude-sonnet', toolsUsed: ['Edit', 'Bash'] }),
+        ] }),
+        makeSession({ sessionId: 's2', requests: [makeRequest({ modelId: '', toolsUsed: [] })] }), // Blank model is not a model.
+      ];
+      const stats = createAnalyzer(sessions).getStats();
+      expect(stats.totalCanceled).toBe(1);
+      expect(stats.uniqueModels).toBe(2);
+      expect(stats.uniqueTools).toBe(3);
+    });
+
     it('handles empty input', () => {
       const analyzer = createAnalyzer([]);
       const stats = analyzer.getStats();

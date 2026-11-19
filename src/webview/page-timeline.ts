@@ -57,6 +57,7 @@ interface SessionDetail {
   creationDate: number | null;
   requestCount: number;
   location: string;
+  harness: string;
   requests: {
     timestamp: number | null;
     messageText: string;
@@ -405,14 +406,14 @@ async function showSessionDetail(sessionId: string): Promise<void> {
   render(html`<div class="session-detail-inner">
     <div class="session-detail-header">
       <h2>${session.workspaceName}</h2>
-      <span class="muted">${formatDate(session.creationDate)} \u00b7 ${session.requestCount} messages \u00b7 ${session.location}</span>
+      <span class="muted">${formatDate(session.creationDate)} \u00b7 ${session.requestCount} messages \u00b7 ${session.harness}${session.location && session.location !== 'terminal' ? ' \u00b7 ' + session.location : ''}</span>
     </div>
     <div class="message-thread">
       ${session.requests.map(r => {
         const ts = r.timestamp ? formatTime(r.timestamp) : '';
         const meta: string[] = [];
         if (r.modelId) meta.push(r.modelId);
-        if (r.agentName) meta.push(r.agentName);
+        if (r.agentName && r.agentName !== session.harness) meta.push(r.agentName); // 'Claude' agent on a Claude session is noise.
         if (r.toolsUsed.length) meta.push('Tools: ' + r.toolsUsed.join(', '));
         return html`
           <div class="msg user-msg">

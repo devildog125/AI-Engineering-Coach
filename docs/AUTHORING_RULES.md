@@ -38,6 +38,10 @@ severity: medium                 # low | medium | high — drives score weightin
 scope: requests                  # requests (per-message) or sessions (per-session)
 version: 1                       # Bump when changing detection logic
 tags: [prompt, quality, short]   # Free-form tags surfaced in the rule filter
+# requiresIdeContext: true       # Optional: judge only IDE-harness requests (Local Agent*, Xcode),
+#                                #   even in the "All harnesses" view
+# harnesses: [Claude]            # Optional: other harnesses an IDE rule also applies to, once their
+#                                #   parser records the signal it reads (e.g. slashCommand)
 thresholds:                      # Tunable knobs. Referenced as thresholds.<name> in DSL.
   minChars: 30                   #   Sliders for these appear in the Rule Editor.
   maxRatio: 0.3

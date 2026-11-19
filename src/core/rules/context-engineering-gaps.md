@@ -21,6 +21,9 @@ Audits your context engineering setup: custom agents, skills, MCP tools, file re
 # How to Improve
 Level up your context engineering: create AGENTS.md for custom agents, SKILL.md for domain knowledge, connect MCP tools, use #file references, and add .instructions.md with project conventions.
 
+# How to Improve (Claude Code)
+Add a CLAUDE.md with project conventions (`/init` drafts one), mention files with `@path`, put reusable know-how in skills under `.claude/skills/`, connect MCP servers (`claude mcp add` or a `.mcp.json`), and delegate side tasks to subagents in `.claude/agents/`.
+
 # Examples
 {{extra.gapCount}} of 5 context engineering signals missing
 

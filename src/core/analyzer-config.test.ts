@@ -538,6 +538,38 @@ describe('ConfigAnalyzer', () => {
     expect(result.workspaces[0].lastActivity).toBe(newerTs);
   });
 
+  it('keeps both harnesses\' suggestions and the Claude hook coverage when deduplicating', () => {
+    generateWorkspaceSuggestionsMock.mockImplementation((_f, _h, isClaude) => isClaude ? ['claude tip'] : ['copilot tip']);
+    analyzeHookCoverageMock.mockImplementation(() => ({ hasPreToolUse: true, hasPostToolUse: false, hasSessionStart: false, hasPermissionRequest: false, totalHooks: 1, hookEvents: ['PreToolUse'] }));
+    const result = makeAnalyzer(
+      [
+        makeSession({ workspaceId: 'ws-1', workspaceName: 'Alpha', harness: 'VS Code', requestCount: 70, requests: [makeRequest({ requestId: 'req-1' })] }),
+        makeSession({ workspaceId: 'claude-2', workspaceName: 'Alpha', harness: 'Claude', requestCount: 60, requests: [makeRequest({ requestId: 'req-2' })] }),
+      ],
+      [
+        makeWorkspace({ id: 'ws-1', name: 'Alpha', path: '/shared/root' }),
+        makeWorkspace({ id: 'claude-2', name: 'Alpha', path: '/shared/root' }),
+      ],
+    ).getConfigHealth();
+
+    expect(result.workspaces).toHaveLength(1);
+    expect(result.workspaces[0].suggestions).toEqual(['copilot tip', 'claude tip']); // Neither harness's advice is dropped.
+    expect(result.workspaces[0].hookCoverage).not.toBeNull();                       // Hooks come from the Claude entry.
+  });
+
+  it('workspace activity honours the harness filter and reports the dominant harness', () => {
+    const sessions = [
+      makeSession({ sessionId: 's1', workspaceId: 'ws-1', harness: 'Local Agent', requestCount: 60, requests: makeRequests(60) }),
+      makeSession({ sessionId: 's2', workspaceId: 'ws-1', harness: 'Claude', requestCount: 60, requests: makeRequests(60) }),
+      makeSession({ sessionId: 's3', workspaceId: 'ws-1', harness: 'Claude', requestCount: 60, requests: makeRequests(60) }),
+    ];
+    const all = makeAnalyzer(sessions, [makeWorkspace()]).getConfigHealth();
+    expect(all.workspaces[0].harness).toBe('Claude');              // Two of three sessions, not the first seen.
+    expect(all.workspaces[0].sessionCount).toBe(3);
+    const onlyLocal = makeAnalyzer(sessions, [makeWorkspace()]).getConfigHealth({ harness: 'Local Agent' });
+    expect(onlyLocal.workspaces[0].sessionCount).toBe(1);          // The filter now reaches activity counts.
+  });
+
   it('flags config files as stale when they are older than 14 days and activity is newer', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2025-01-30T00:00:00Z'));

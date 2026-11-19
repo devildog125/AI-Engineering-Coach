@@ -37,7 +37,7 @@ export async function renderSkills(container: HTMLElement, currentFilter: DateFi
   render(html`
     <div class="sk-header">
       <h1>Skill Finder</h1>
-      <p class="sk-subtitle">Analyze your repeated prompts to discover custom skill opportunities and matching community skills.</p>
+      <p class="sk-subtitle">Analyze your repeated prompts to discover custom skill opportunities and matching skills for Claude Code and Copilot. Skills install to ~/.claude/skills/, which both read.</p>
     </div>
 
     <div class="sk-toolbar">
@@ -80,6 +80,8 @@ export async function renderSkills(container: HTMLElement, currentFilter: DateFi
       <p class="sk-section-desc">
         Matching picks from${' '}
         <a href="${CATALOG_BASE}/" target="_blank">awesome-copilot</a>
+        ${' '}and${' '}
+        <a href="https://github.com/anthropics/skills" target="_blank">Anthropic's official skills</a>
         ${' '}based on your repeated activities.
       </p>
       <div id="catalogResults">
@@ -172,6 +174,7 @@ async function runAnalysis(): Promise<void> {
     filter.fromDate = d.toISOString().slice(0, 10);
   }
   if (workspaceId) filter.workspaceId = workspaceId;
+  if (activeFilter.harness) filter.harness = activeFilter.harness; // The dashboard's harness pick was only a cache key before.
 
   let clusters: WorkflowCluster[] = [];
 
@@ -321,7 +324,7 @@ function renderTriageResults(container: HTMLElement, triaged: TriagedCluster[], 
                   await rpc<{ ok: boolean }>('installSkill', { filename: res.filename, content: res.content } as Record<string, unknown>);
                   el.textContent = 'Installed';
                   el.classList.add('sk-btn-done');
-                  render(html`<span class="sk-installed-msg">Skill installed to ~/.agents/skills/</span>`, previewEl);
+                  render(html`<span class="sk-installed-msg">Skill installed to ~/.claude/skills/ (used by Claude Code and VS Code Copilot)</span>`, previewEl);
                 } catch (err: unknown) {
                   const msg = err instanceof Error ? err.message : 'Install failed';
                   render(html`<span class="sk-error">${msg}</span>`, previewEl);
@@ -418,38 +421,149 @@ function renderCatalogList(container: HTMLElement, items: CatalogItem[], totalSc
     <div class="sk-grid">${items.map(item => renderCatalogCard(item))}</div>
   `, container);
 
-  for (const btn of container.querySelectorAll('.sk-btn-install-catalog')) {
-    btn.addEventListener('click', (e) => {
+  for (const btn of container.querySelectorAll<HTMLButtonElement>('.sk-btn-install-catalog')) {
+    btn.addEventListener('click', () => { void onCatalogInstallClick(btn); });
+  }
+}
+
+/** Fields an install button carries about its catalog item. */
+interface CatalogInstallTarget {
+  path: string;
+  kind: string;
+  title: string;
+  description: string;
+  source: string;
+}
+
+/** Read the catalog item details stored on an install button. */
+function installTargetOf(el: HTMLButtonElement): CatalogInstallTarget {
+  return {
+    path: el.dataset.path || '',
+    kind: el.dataset.kind || 'skill',
+    title: el.dataset.title || '',
+    description: el.dataset.description || '',
+    source: el.dataset.source || 'awesome-copilot',
+  };
+}
+
+/** Show a status or error line under a catalog card's actions. */
+function setInstallMessage(el: HTMLElement, text: string, isError = false): void {
+  const msgEl = el.closest('.sk-card')?.querySelector<HTMLElement>('.sk-install-msg');
+  if (!msgEl) return;
+  msgEl.textContent = text;
+  msgEl.classList.toggle('sk-error', isError);
+}
+
+/** Install button handler: license confirm, then the Claude-or-agents choice for awesome-copilot skills.
+ *  Exists so a Copilot skill is never dropped into Claude Code unconverted without the user choosing it. */
+async function onCatalogInstallClick(el: HTMLButtonElement): Promise<void> {
+  const target = installTargetOf(el);
+  if (!target.path) return;
+  // Proprietary license: the first click only asks; the second click installs.
+  if (el.dataset.proprietary === 'true' && el.dataset.confirmed !== 'true') {
+    el.dataset.confirmed = 'true';
+    el.textContent = 'Proprietary license: click again to install';
+    return;
+  }
+  if (target.source === 'awesome-copilot' && target.kind in CHOICE_DIRS) {
+    showInstallChoice(el, target);                                 // Ask: Claude Code (converted) or ~/.agents (as-is).
+    return;
+  }
+  await installCatalogItemDirect(el, target);                      // Anthropic skills: already Claude Code format.
+}
+
+/** Install destinations per awesome-copilot kind: converted for Claude Code, or copied as-is.
+ *  Claude Code equivalents: skill → skill, custom agent → subagent, instructions → path-scoped rule. */
+const CHOICE_DIRS: Record<string, { claude: string; claudeWhat: string; asIs: string }> = {
+  skill: { claude: '~/.claude/skills/', claudeWhat: 'skill', asIs: '~/.agents/skills/' },
+  agent: { claude: '~/.claude/agents/', claudeWhat: 'subagent', asIs: '~/.agents/agents/' },
+  instruction: { claude: '~/.claude/rules/', claudeWhat: 'rule (applyTo becomes paths)', asIs: '~/.agents/instructions/' },
+};
+
+/** Replace the Install button with the two destinations for an awesome-copilot item. */
+function showInstallChoice(el: HTMLButtonElement, target: CatalogInstallTarget): void {
+  const choiceEl = el.closest('.sk-card')?.querySelector<HTMLElement>('.sk-install-choice');
+  const dirs = CHOICE_DIRS[target.kind];
+  if (!choiceEl || !dirs) return;
+  el.hidden = true;                                                // The choice buttons take its place.
+  render(html`
+    <span class="sk-install-question">Install for:</span>
+    <button class="sk-btn sk-btn-primary sk-choice-claude" title=${`Converts to a Claude Code ${dirs.claudeWhat}, rewriting Copilot-only references, and installs to ${dirs.claude} after you review it.`}>Claude Code (convert)</button>
+    <button class="sk-btn sk-btn-secondary sk-choice-agents" title=${`Installs the original file unchanged to ${dirs.asIs}`}>${dirs.asIs.replace(/\/$/, '')} (as-is)</button>`, choiceEl);
+  choiceEl.querySelector<HTMLButtonElement>('.sk-choice-claude')?.addEventListener('click', () => {
+    render(null, choiceEl);
+    void convertAndPreview(el, target);
+  });
+  choiceEl.querySelector<HTMLButtonElement>('.sk-choice-agents')?.addEventListener('click', () => {
+    render(null, choiceEl);
+    el.hidden = false;
+    void installCatalogItemDirect(el, { ...target }, 'agents');
+  });
+}
+
+/** Download and install a catalog item without conversion.
+ *  @param destination 'agents' puts awesome-copilot skills in ~/.agents/skills; otherwise the backend default */
+async function installCatalogItemDirect(el: HTMLButtonElement, target: CatalogInstallTarget, destination?: 'agents'): Promise<void> {
+  el.disabled = true;
+  el.textContent = 'Fetching...';
+  try {
+    const res = await rpc<{ content: string; filename: string }>('installCatalogItem', {
+      path: target.path, kind: target.kind, title: target.title, source: target.source, target: destination,
+    } as Record<string, unknown>);
+    el.textContent = 'Installed';
+    el.classList.add('sk-btn-done');
+    const where = destination === 'agents' ? CHOICE_DIRS[target.kind]?.asIs ?? '' : '';
+    setInstallMessage(el, `Installed as ${where}${res.filename}`);
+  } catch (err: unknown) {
+    el.textContent = 'Install';
+    el.disabled = false;
+    setInstallMessage(el, err instanceof Error ? err.message : 'Install failed', true);
+  }
+}
+
+/** Convert an awesome-copilot item for Claude Code, show it, and install only after "Save & Install". */
+async function convertAndPreview(el: HTMLButtonElement, target: CatalogInstallTarget): Promise<void> {
+  const previewEl = el.closest('.sk-card')?.querySelector<HTMLElement>('.sk-card-preview');
+  if (!previewEl) return;
+  el.hidden = false;
+  el.disabled = true;
+  el.textContent = 'Converting...';
+  try {
+    const res = await rpc<{ content: string; filename: string; note: string; kind: string; destination: string }>('convertCatalogSkill', {
+      path: target.path, kind: target.kind, title: target.title, description: target.description,
+    } as Record<string, unknown>);
+    el.textContent = 'Review Below';
+    render(html`
+      <details class="sk-preview-details" open>
+        <summary>Claude Code ${CHOICE_DIRS[target.kind]?.claudeWhat ?? 'skill'}: ${res.destination}${res.filename}</summary>
+        <p class="sk-install-msg">${res.note}</p>
+        <pre class="sk-preview-code">${res.content}</pre>
+        <div class="sk-preview-actions">
+          <button class="sk-btn sk-btn-confirm">Save & Install</button>
+          <button class="sk-btn sk-btn-secondary sk-btn-cancel">Cancel</button>
+        </div>
+      </details>`, previewEl);
+    previewEl.querySelector<HTMLElement>('.sk-btn-confirm')?.addEventListener('click', () => {
       void (async () => {
-        const el = e.currentTarget as HTMLButtonElement;
-        const path = el.dataset.path || '';
-        const kind = el.dataset.kind || 'skill';
-        const title = el.dataset.title || '';
-        if (!path) return;
-
-        el.disabled = true;
-        el.textContent = 'Fetching...';
-
         try {
-          const res = await rpc<{ content: string; filename: string }>('installCatalogItem', {
-            path, kind, title,
-          } as Record<string, unknown>);
-
+          await rpc<{ ok: boolean }>('installSkill', { filename: res.filename, content: res.content, kind: target.kind } as Record<string, unknown>);
           el.textContent = 'Installed';
           el.classList.add('sk-btn-done');
-          const parent = el.closest('.sk-card');
-          const msgEl = parent?.querySelector<HTMLElement>('.sk-install-msg');
-          if (msgEl) msgEl.textContent = `Installed as ${res.filename}`;
+          render(html`<span class="sk-installed-msg">Converted and installed to ${res.destination}${res.filename}</span>`, previewEl);
         } catch (err: unknown) {
-          const msg = err instanceof Error ? err.message : 'Install failed';
-          el.textContent = 'Install';
-          el.disabled = false;
-          const parent = el.closest('.sk-card');
-          const msgEl = parent?.querySelector<HTMLElement>('.sk-install-msg');
-          if (msgEl) { msgEl.textContent = msg; msgEl.classList.add('sk-error'); }
+          render(html`<span class="sk-error">${err instanceof Error ? err.message : 'Install failed'}</span>`, previewEl);
         }
       })();
     });
+    previewEl.querySelector<HTMLElement>('.sk-btn-cancel')?.addEventListener('click', () => {
+      render(null, previewEl);
+      el.disabled = false;
+      el.textContent = 'Install';
+    });
+  } catch (err: unknown) {
+    el.disabled = false;
+    el.textContent = 'Install';
+    setInstallMessage(el, err instanceof Error ? err.message : 'Conversion failed', true);
   }
 }
 
@@ -457,7 +571,9 @@ function renderCatalogCard(item: CatalogItem): ReturnType<typeof html> {
   const color = kindColors[item.kind] || COLORS.blue;
   const icon = kindIcons[item.kind] || '?';
   const kindLabel = item.kind.charAt(0).toUpperCase() + item.kind.slice(1);
-  const ghUrl = `https://github.com/github/awesome-copilot/blob/main/${encodeURI(item.path)}`;
+  // Older cached results have no url/source: they are awesome-copilot items.
+  const ghUrl = item.url || `https://github.com/github/awesome-copilot/blob/main/${encodeURI(item.path)}`;
+  const sourceLabel = item.source === 'anthropic' ? 'Anthropic' : 'awesome-copilot';
 
   return html`
     <div class="sk-card sk-card-catalog">
@@ -469,7 +585,9 @@ function renderCatalogCard(item: CatalogItem): ReturnType<typeof html> {
           </div>
           <div class="sk-card-badges">
             <span class="sk-badge" style="color:${color}">${kindLabel}</span>
-            ${item.category ? html`<span class="sk-badge">${item.category}</span>` : null}
+            <span class="sk-badge">${sourceLabel}</span>
+            ${item.category && item.category !== sourceLabel ? html`<span class="sk-badge">${item.category}</span>` : null}
+            ${item.license ? html`<span class="sk-badge" style="color:${item.proprietary ? COLORS.yellow : COLORS.green}" title=${item.proprietary ? 'Not open source: read LICENSE.txt in the skill folder before installing.' : 'Open-source license'}>${item.license}</span>` : null}
           </div>
         </div>
       </div>
@@ -480,9 +598,13 @@ function renderCatalogCard(item: CatalogItem): ReturnType<typeof html> {
             ${item.matchReasons.map(r => html`<span class="sk-reason">${r}</span>`)}
           </div>` : null}
         <div class="sk-card-actions">
-          <button class="sk-btn sk-btn-install-catalog" data-path="${item.path}" data-kind="${item.kind}" data-title="${item.title}">Install</button>
+          ${item.installed
+            ? html`<button class="sk-btn sk-btn-done" disabled title="A Claude Code skill with this name is already installed (personal or plugin).">Installed</button>`
+            : html`<button class="sk-btn sk-btn-install-catalog" data-path="${item.path}" data-kind="${item.kind}" data-title="${item.title}" data-source="${item.source ?? 'awesome-copilot'}" data-description="${item.description}" data-proprietary="${item.proprietary ? 'true' : 'false'}">Install</button>`}
+          <span class="sk-install-choice"></span>
           <span class="sk-install-msg"></span>
         </div>
+        <div class="sk-card-preview"></div>
       </div>
     </div>`;
 }
